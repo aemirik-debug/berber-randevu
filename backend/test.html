@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test</title>
+</head>
+<body>
+    <h1>Berber Test</h1>
+    
+    <h2>1. Kayıt</h2>
+    <button onclick="register()">Kayıt Ol</button>
+    <pre id="registerResult"></pre>
+
+    <h2>2. Giriş</h2>
+    <button onclick="login()">Giriş Yap</button>
+    <pre id="loginResult"></pre>
+
+    <script>
+        const API = 'http://localhost:5001';
+
+        async function register() {
+            const res = await fetch(`${API}/api/barbers/register`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    name: "Ali Usta",
+                    phone: "5551112233",
+                    password: "123456",
+                    address: "Ataşehir",
+                    location: [29.124, 40.987],
+                    services: [{name: "Saç Kesimi", price: 150, duration: 30}]
+                })
+            });
+            const data = await res.json();
+            document.getElementById('registerResult').textContent = JSON.stringify(data, null, 2);
+        }
+
+        async function login() {
+            const res = await fetch(`${API}/api/barbers/login`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    phone: "5551112233",
+                    password: "123456"
+                })
+            });
+            const data = await res.json();
+            document.getElementById('loginResult').textContent = JSON.stringify(data, null, 2);
+        }
+    </script>
+</body>
+</html>

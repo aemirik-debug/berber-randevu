@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Berber Test - Tam Versiyon</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body { font-family: Arial; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .section { border: 2px solid #ddd; padding: 20px; margin: 20px 0; border-radius: 10px; }
+        button { padding: 12px 24px; margin: 5px; cursor: pointer; font-size: 16px; border: none; border-radius: 5px; }
+        .primary { background: #2196F3; color: white; }
+        .success { background: #4CAF50; color: white; }
+        .danger { background: #f44336; color: white; }
+        input { padding: 10px; margin: 5px; width: 300px; font-size: 14px; }
+        #log { background: #f5f5f5; padding: 15px; height: 300px; overflow-y: scroll; font-family: monospace; font-size: 12px; border: 1px solid #ccc; }
+        .request-box { background: #e8f5e9; border: 2px solid #4CAF50; padding: 15px; margin: 10px 0; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>🪒 Berber Randevu Sistemi - Test Paneli</h1>
+
+    <!-- ADIM 1: Kayıt -->
+    <div class="section">
+        <h2>Adım 1: Berber Kaydı (İlk sefer için)</h2>
+        <input type="text" id="regName" value="Ali Usta" placeholder="İsim"><br>
+        <input type="text" id="regPhone" value="5551112233" placeholder="Telefon"><br>
+        <input type="password" id="regPass" value="123456" placeholder="Şifre"><br>
+        <input type="text" id="regAddress" value="Ataşehir, İstanbul" placeholder="Adres"><br>
+        <button class="primary" onclick="register()">📝 Kayıt Ol</button>
+    </div>
+
+    <!-- ADIM 2: Login -->
+    <div class="section">
+        <h2>Adım 2: Giriş Yap</h2>
+        <input type="text" id="loginPhone" value="5551112233" placeholder="Telefon"><br>
+        <input type="password" id="loginPass" value="123456" placeholder="Şifre"><br>
+        <button class="success" onclick="login()">🔑 Giriş Yap</button>
+        <div id="loginInfo"></div>
+    </div>
+
+    <!-- ADIM 3: Socket Bağlantısı -->
+    <div class="section">
+        <h2>Adım 3: Socket Bağlantısı (Gerçek Zamanlı)</h2>
+        <button class="primary" onclick="connectSocket()" id="socketBtn">🔌 Socket Bağlan</button>
+        <button class="danger" onclick="setStatus('online')">🟢 Online</button>
+        <button class="danger" onclick="setStatus('busy')">🟡 Meşgul</button>
+        <button class="danger" onclick="setStatus('offline')">🔴 Offline</button>
+    </div>
+
+    <!-- ADIM 4: Gelen Talepler -->
+    <div class="section">
+        <h2>Adım 4: Gelen Randevu Talepleri</h2>
+        <div id="requests">Henüz talep yok...</div>
+    </div>
+
+    <!-- ADIM 5: Müşteri Simülasyonu -->
+    <div class="section">
+        <h2>Adım 5: Müşteri Simülasyonu</h2>
+        <p>Bu bölümü başka bir sekmede veya telefonda aç:</p>
+        <button class="primary" onclick="openCustomerTab()">👤 Müşteri Panelini Aç (Yeni Sekme)</button>
+    </div>
+
+    <!-- LOG -->
+    <div class="section">
+        <h2>Sistem Logları</h2>
+        <div id="log"></div>
+        <button onclick="clearLog()">Logları Temizle</button>
+    </div>
+
+    <script>
+        const API = 'http://localhost:5001';
+        let token = null;
+        let barberId = null;
+        let socket = null;
+
+        function log(msg) {
+            const time = new Date().toLocaleTimeString();
+            document.getElementById('log').innerHTML += `<div>[${time}] ${msg}</div>`;
+            document.getElementById('log').scrollTop = document.getElementById('log').scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        // ADIM 1: Kayıt
+        async function register() {
+            const body = {
+                name: document.getElementById('regName').value,
+                phone: document.getElementById('regPhone').value,
+                password: document.getElementById('regPass').value,
+                address: document.getElementById('regAddress').value,
+                location: [29.124, 40.987],
+                services: [
+                    {name: "Saç Kesimi", price: 150, duration: 30},
+                    {name: "Sakal Tıraşı", price: 80, duration: 15}
+                ]
+            };
+
+            try {
+                log('📤 Kayıt isteği gönderiliyor...');
+                const res = await fetch(`${API}/api/barbers/register`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    log(`✅ Kayıt başarılı! ID: ${data.data.id}`);
+                    // Otomatik doldur
+                    document.getElementById('loginPhone').value = body.phone;
+                } else {
+                    log(`❌ Kayıt hatası: ${data.error}`);
+                }
+            } catch (e) {
+                log(`❌ Hata: ${e.message}`);
+            }
+        }
+
+        // ADIM 2: Login
+        async function login() {
+            const body = {
+                phone: document.getElementById('loginPhone').value,
+                password: document.getElementById('loginPass').value
+            };
+
+            try {
+                log('🔑 Giriş yapılıyor...');
+                const res = await fetch(`${API}/api/barbers/login`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    token = data.token;
+                    barberId = data.data.id;
+                    log(`✅ Giriş başarılı!`);
+                    log(`🆔 Barber ID: ${barberId}`);
+                    log(`🔑 Token: ${token.substring(0, 30)}...`);
+                    
+                    document.getElementById('loginInfo').innerHTML = `
+                        <p><strong>✅ Giriş Yapıldı</strong></p>
+                        <p>ID: ${barberId}</p>
+                        <p>Durum: ${data.data.status}</p>
+                    `;
+                } else {
+                    log(`❌ Giriş hatası: ${data.error}`);
+                }
+            } catch (e) {
+                log(`❌ Hata: ${e.message}`);
+            }
+        }
+
+        // ADIM 3: Socket Bağlantısı
+        function connectSocket() {
+            if (!token || !barberId) {
+                log('❌ Önce giriş yapmalısın!');
+                return;
+            }
+
+            socket = io(API);
+
+            socket.on('connect', () => {
+                log('🔌 Socket bağlandı!');
+                socket.emit('barber_login', barberId);
+                document.getElementById('socketBtn').textContent = '✅ Bağlı';
+                document.getElementById('socketBtn').disabled = true;
+            });
+
+            socket.on('incoming_request', (data) => {
+                log(`📱 YENİ TALEP GELDİ!`);
+                showRequest(data);
+            });
+
+            socket.on('disconnect', () => {
+                log('❌ Socket bağlantısı koptu');
+            });
+        }
+
+        // Durum Değiştir
+        async function setStatus(status) {
+            if (!token) {
+                log('❌ Önce giriş yap!');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API}/api/barbers/status`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({status})
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    log(`✅ Durum değiştirildi: ${status.toUpperCase()}`);
+                } else {
+                    log(`❌ Durum hatası: ${data.error}`);
+                }
+            } catch (e) {
+                log(`❌ Hata: ${e.message}`);
+            }
+        }
+
+        // Talep Göster
+        function showRequest(data) {
+            const div = document.createElement('div');
+            div.className = 'request-box';
+            div.innerHTML = `
+                <h3>🚨 YENİ RANDEVU TALEBİ</h3>
+                <p><strong>Müşteri:</strong> ${data.customerPhone}</p>
+                <p><strong>Hizmetler:</strong> ${data.services.join(', ')}</p>
+                <p><strong>Tahmini Fiyat:</strong> ${data.estimatedPrice} TL</p>
+                <p><strong>Kalan Süre:</strong> <span id="timer-${data.requestId}">30</span> saniye</p>
+                <button class="success" onclick="respond('${data.requestId}', 'accepted', this)">✅ ONAYLA</button>
+                <button class="danger" onclick="respond('${data.requestId}', 'rejected', this)">❌ REDDET</button>
+            `;
+            
+            document.getElementById('requests').appendChild(div);
+            
+            // Geri sayım
+            let timeLeft = 30;
+            const timer = setInterval(() => {
+                timeLeft--;
+                const timerEl = document.getElementById(`timer-${data.requestId}`);
+                if (timerEl) timerEl.textContent = timeLeft;
+                if (timeLeft <= 0) {
+                    clearInterval(timer);
+                    div.style.opacity = '0.5';
+                    div.innerHTML += '<p><strong>⏰ SÜRE DOLDU</strong></p>';
+                }
+            }, 1000);
+        }
+
+        // Yanıt Gönder
+        async function respond(requestId, status, btn) {
+            try {
+                const res = await fetch(`${API}/api/requests/${requestId}/respond`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({status})
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    log(`📤 Talep ${status === 'accepted' ? 'onaylandı' : 'reddedildi'}`);
+                    btn.parentElement.innerHTML += `<p><strong>${status === 'accepted' ? '✅ ONAYLADIN' : '❌ REDDETTİN'}</strong></p>`;
+                }
+            } catch (e) {
+                log(`❌ Yanıt hatası: ${e.message}`);
+            }
+        }
+
+        // Müşteri Sekmesi Aç
+        function openCustomerTab() {
+    window.open('customer.html', 'customer', 'width=700,height=900,left=100,top=100');
+}
+    </script>
+</body>
+</html>

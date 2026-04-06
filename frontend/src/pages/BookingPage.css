@@ -1,0 +1,164 @@
+.booking-container {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  padding: 20px;
+  background: #f9f9f9;
+  min-height: 100vh;
+}
+
+.barbers-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.barber-card {
+  background: #fff;
+  padding: 15px;
+  border-radius: 8px;
+  width: 220px;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+}
+
+.barber-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.barber-card.selected {
+  border: 2px solid #0078d7;
+}
+
+.booking-section {
+  background: #fff;
+  padding: 20px;
+  border-radius: 8px;
+  margin-top: 20px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+}
+
+.slots-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.slots-grid button {
+  padding: 10px;
+  border-radius: 6px;
+  min-width: 80px;
+  text-align: center;
+  font-size: 0.9rem;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.slots-grid button:enabled {
+  background: #c8e6c9;
+}
+
+.slots-grid button:disabled {
+  background: #ffcdd2;
+  cursor: not-allowed;
+}
+
+.slots-grid button:hover:enabled {
+  background: #a5d6a7;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.payment-modal {
+  background: #fff;
+  padding: 20px;
+  border-radius: 8px;
+  width: 350px;
+  text-align: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.payment-form {
+  margin: 15px 0;
+}
+
+.payment-form input {
+  margin: 5px;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  width: 100%;
+}
+
+.card-row {
+  display: flex;
+  gap: 10px;
+}
+
+.pay-btn {
+  background: #0078d7;
+  color: #fff;
+  padding: 10px 15px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-top: 10px;
+}
+
+.pay-btn:hover {
+  background: #005fa3;
+}
+
+.cancel-btn {
+  background: #ccc;
+  color: #333;
+  padding: 10px 15px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-top: 10px;
+}
+
+.processing {
+  font-weight: bold;
+  color: #0078d7;
+}
+
+.success {
+  color: green;
+  font-weight: bold;
+  margin-top: 10px;
+}
+
+.error {
+  color: red;
+  font-weight: bold;
+  margin-top: 10px;
+}
+
+.back-btn {
+  background: #ccc;
+  color: #333;
+  padding: 8px 15px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 15px;
+}
+
+.back-btn:hover {
+  background: #aaa;
+}

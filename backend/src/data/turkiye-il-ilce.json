@@ -1,0 +1,75 @@
+[
+  {
+    "name": "İstanbul",
+    "districts": [
+      "Adalar",
+      "Arnavutköy",
+      "Ataşehir",
+      "Avcılar",
+      "Bağcılar",
+      "Bahçelievler",
+      "Bakırköy",
+      "Başakşehir",
+      "Bayrampaşa",
+      "Beşiktaş",
+      "Beykoz",
+      "Beylikdüzü",
+      "Beyoğlu",
+      "Çatalca",
+      "Çekmeköy",
+      "Esenler",
+      "Esenyurt",
+      "Eyüpsultan",
+      "Fatih",
+      "Gaziosmanpaşa",
+      "Güngören",
+      "Kadıköy",
+      "Kağıthane",
+      "Kartal",
+      "Küçükçekmece",
+      "Maltepe",
+      "Pendik",
+      "Sancaktepe",
+      "Sarıyer",
+      "Şile",
+      "Silivri",
+      "Şişli",
+      "Sultanbeyli",
+      "Sultangazi",
+      "Tuzla",
+      "Ümraniye",
+      "Üsküdar",
+      "Zeytinburnu"
+    ]
+  },
+  {
+    "name": "Ankara",
+    "districts": [
+      "Altındağ",
+      "Çankaya",
+      "Etimesgut",
+      "Keçiören",
+      "Mamak",
+      "Sincan",
+      "Yenimahalle",
+      "Polatlı",
+      "Beypazarı"
+    ]
+  },
+  {
+    "name": "İzmir",
+    "districts": [
+      "Balçova",
+      "Bayraklı",
+      "Bornova",
+      "Buca",
+      "Çiğli",
+      "Gaziemir",
+      "Karabağlar",
+      "Karşıyaka",
+      "Konak",
+      "Menemen",
+      "Torbalı"
+    ]
+  }
+]
