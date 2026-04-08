@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import BarberProfile from './BarberProfile';
 import ShopSettings from './ShopSettings';
@@ -6,6 +6,8 @@ import SlotDetailsModal from '../components/SlotDetailsModal';
 import CreateManualSlotModal from '../components/CreateManualSlotModal';
 import EditSlotModal from '../components/EditSlotModal';
 import api from '../services/api';
+import { connectSocket, disconnectSocket } from '../services/socket';
+import './BarberDashboard.css';
 
 function BarberDashboard() {
   const navigate = useNavigate();
@@ -42,6 +44,18 @@ function BarberDashboard() {
       return;
     }
 
+    const socket = connectSocket();
+    socket.emit('barber_login', barberId);
+    socket.on('customer_reminder', (payload) => {
+      const customerName = payload?.customerName || 'Müşteri';
+      const dateLabel = payload?.date ? new Date(payload.date).toLocaleDateString() : '';
+      const timeLabel = payload?.time || '';
+      setActionMessage({
+        text: `${customerName} ${dateLabel} ${timeLabel} için hatırlatma gönderdi.`,
+        type: 'success'
+      });
+    });
+
     const fetchAll = async () => {
       try {
         const [profRes, svcRes] = await Promise.all([
@@ -60,6 +74,11 @@ function BarberDashboard() {
       }
     };
     fetchAll();
+
+    return () => {
+      socket.off('customer_reminder');
+      disconnectSocket();
+    };
   }, [navigate]);
   const [activeTab, setActiveTab] = useState('profile');
   const [mySlots, setMySlots] = useState([]);
@@ -103,6 +122,28 @@ function BarberDashboard() {
     localStorage.removeItem('barberId');
     navigate('/barber/login');
   };
+
+  const renderStars = (value) => {
+    const rating = Math.max(0, Math.min(5, Math.round(Number(value) || 0)));
+    return `${'★'.repeat(rating)}${'☆'.repeat(5 - rating)}`;
+  };
+
+  const calendarDays = useMemo(() => {
+    const startDate = new Date();
+    startDate.setHours(0, 0, 0, 0);
+
+    return Array.from({ length: 14 }, (_, index) => {
+      const currentDate = new Date(startDate);
+      currentDate.setDate(startDate.getDate() + index);
+
+      return {
+        value: currentDate.toISOString().split('T')[0],
+        dayName: new Intl.DateTimeFormat('tr-TR', { weekday: 'short' }).format(currentDate),
+        monthName: new Intl.DateTimeFormat('tr-TR', { month: 'short' }).format(currentDate),
+        dayNumber: new Intl.DateTimeFormat('tr-TR', { day: '2-digit' }).format(currentDate),
+      };
+    });
+  }, []);
 
   // hizmet işlemleri
   const handleAddService = async (e) => {
@@ -252,78 +293,97 @@ function BarberDashboard() {
                 <h5 className="mb-0 fw-bold" style={{color: '#2c3e50'}}>Hizmetlerim</h5>
               </div>
               <div className="card-body p-4">
-                <form className="row g-3 mb-4" onSubmit={handleAddService}>
-                  {serviceMessage.text && (
-                    <div className={`alert alert-${serviceMessage.type === 'success' ? 'success' : 'danger'} w-100`}>
-                      {serviceMessage.text}
-                    </div>
-                  )}
-                  <div className="col-md-4">
-                    <input className="form-control" placeholder="Hizmet adı" value={newService.name}
-                      onChange={e => setNewService({...newService, name: e.target.value})} />
+                {serviceMessage.text && (
+                  <div className={`alert alert-${serviceMessage.type === 'success' ? 'success' : 'danger'} mb-3`}>
+                    {serviceMessage.text}
                   </div>
-                  <div className="col-md-3">
-                    <input className="form-control" type="number" placeholder="Fiyat" value={newService.price}
-                      onChange={e => setNewService({...newService, price: e.target.value})} />
-                  </div>
-                  <div className="col-md-3">
-                    <input className="form-control" type="number" placeholder="Süre (dk)" value={newService.duration}
-                      onChange={e => setNewService({...newService, duration: e.target.value})} />
-                  </div>
-                  <div className="col-md-2">
-                    <button className="btn btn-primary w-100" type="submit">Ekle</button>
-                  </div>
-                </form>
-                <div className="list-group">
-                  {services.map(svc => (
-                    <div key={svc._id} className="list-group-item">
-                      {editingServiceId === svc._id ? (
-                        <div className="row g-2 align-items-center">
-                          <div className="col-md-4">
-                            <input className="form-control" value={editingData.name}
-                              onChange={e => setEditingData({...editingData, name: e.target.value})} />
-                          </div>
-                          <div className="col-md-2">
-                            <input className="form-control" type="number" value={editingData.price}
-                              onChange={e => setEditingData({...editingData, price: e.target.value})} />
-                          </div>
-                          <div className="col-md-2">
-                            <input className="form-control" type="number" value={editingData.duration}
-                              onChange={e => setEditingData({...editingData, duration: e.target.value})} />
-                          </div>
-                          <div className="col-auto">
-                            <button className="btn btn-success btn-sm me-1" onClick={() => handleUpdateService(svc._id)}>✔️</button>
-                            <button className="btn btn-secondary btn-sm" onClick={cancelEdit}>✖️</button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="d-flex justify-content-between align-items-center">
-                          <div>
-                            <strong>{svc.name}</strong> - ₺{svc.price} / {svc.duration || 0}dk
-                          </div>
-                          <div>
-                            <button className="btn btn-outline-primary btn-sm me-2" onClick={() => startEdit(svc)}>Düzenle</button>
-                            <button className="btn btn-outline-danger btn-sm" onClick={() => handleDeleteService(svc._id)}>Sil</button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {services.length === 0 && (
-                    <div className="text-muted text-center py-3">Henüz hizmet eklenmemiş.</div>
-                  )}
+                )}
+                <div className="barber-service-picker mb-4">
+                  <form className="barber-service-form" onSubmit={handleAddService}>
+                    <input
+                      type="text"
+                      placeholder="Hizmet adı (örn: Traş, Kesim)"
+                      value={newService.name}
+                      onChange={e => setNewService({...newService, name: e.target.value})}
+                    />
+                    <input
+                      type="number"
+                      placeholder="Fiyat (₺)"
+                      value={newService.price}
+                      onChange={e => setNewService({...newService, price: e.target.value})}
+                    />
+                    <input
+                      type="number"
+                      placeholder="Süre (dakika)"
+                      value={newService.duration}
+                      onChange={e => setNewService({...newService, duration: e.target.value})}
+                    />
+                    <button type="submit" className="btn btn-primary">✂️ Hizmet Ekle</button>
+                  </form>
                 </div>
+
+                {services.length > 0 ? (
+                  <div className="barber-service-grid">
+                    {services.map(svc => (
+                      <div key={svc._id} className="barber-service-card">
+                        {editingServiceId === svc._id ? (
+                          <form onSubmit={(e) => { e.preventDefault(); handleUpdateService(svc._id); }} className="barber-service-form">
+                            <input
+                              type="text"
+                              value={editingData.name}
+                              onChange={e => setEditingData({...editingData, name: e.target.value})}
+                            />
+                            <input
+                              type="number"
+                              value={editingData.price}
+                              onChange={e => setEditingData({...editingData, price: e.target.value})}
+                            />
+                            <input
+                              type="number"
+                              value={editingData.duration}
+                              onChange={e => setEditingData({...editingData, duration: e.target.value})}
+                            />
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                              <button type="submit" className="btn btn-success btn-sm" style={{ flex: 1 }}>✅ Kaydet</button>
+                              <button type="button" className="btn btn-secondary btn-sm" onClick={cancelEdit} style={{ flex: 1 }}>✕ İptal</button>
+                            </div>
+                          </form>
+                        ) : (
+                          <>
+                            <div className="barber-service-card-header">
+                              <span className="barber-service-card-icon">✂️</span>
+                              <span className="barber-service-card-name">{svc.name}</span>
+                            </div>
+                            <div className="barber-service-card-body">
+                              <div className="barber-service-card-price">
+                                <label>Fiyat</label>
+                                <strong>₺{Number(svc.price || 0)}</strong>
+                              </div>
+                              <div className="barber-service-card-duration">
+                                <label>Süre</label>
+                                <strong>{Number(svc.duration || 0)} dk</strong>
+                              </div>
+                            </div>
+                            <div className="barber-service-card-actions">
+                              <button className="edit-btn" onClick={() => startEdit(svc)}>✏️ Düzenle</button>
+                              <button className="delete-btn" onClick={() => handleDeleteService(svc._id)}>🗑️ Sil</button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-muted text-center py-5">Henüz hizmet eklenmemiş. Yukarıdan yeni hizmet ekleyerek başlayabilirsin.</div>
+                )}
               </div>
             </div>
           )}
 
           {activeTab === 'calendar' && (
             <div className="card shadow border-0 rounded-4 overflow-hidden">
-              <div className="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+              <div className="card-header bg-white border-bottom py-3">
                 <h5 className="mb-0 fw-bold" style={{color: '#2c3e50'}}>Takvim</h5>
-                <div style={{maxWidth: '200px'}}>
-                  <input type="date" className="form-control" value={slotDate} onChange={e => setSlotDate(e.target.value)} />
-                </div>
               </div>
               <div className="card-body p-4">
                 {!barber.features?.calendarBooking && (
@@ -337,22 +397,45 @@ function BarberDashboard() {
                     <button type="button" className="btn-close" onClick={() => setSlotsError('')}></button>
                   </div>
                 )}
-                <div className="d-flex gap-2 mb-3">
-                  <button className="btn btn-sm btn-outline-secondary" disabled={loadingSlots || !barber.features?.calendarBooking} onClick={async () => {
-                    setLoadingSlots(true);
-                    setSlotsError('');
-                    try {
-                      const res = await api.get('/slots/my-slots', { params: { date: slotDate } });
-                      setMySlots(res.data.data || []);
-                    } catch (err) { 
-                      console.error('Slot yükleme hatası:', err);
-                      setSlotsError(err.response?.data?.error || 'Slotlar yüklenemedi');
-                    } finally {
-                      setLoadingSlots(false);
-                    }
-                  }}>
-                    {loadingSlots ? '⏳ Yükleniyor...' : 'Yükle'}
-                  </button>
+
+                <div className="barber-mini-calendar mb-4">
+                  <div className="barber-calendar-head">
+                    <div>
+                      <div className="barber-calendar-title">Takvim Görünümü</div>
+                      <div className="barber-calendar-subtitle">Randevularını görmek için gün seç.</div>
+                    </div>
+                    <div className="barber-calendar-pill">14 Gün</div>
+                  </div>
+                  <div className="barber-calendar-grid">
+                    {calendarDays.map((day) => {
+                      const isSelected = slotDate === day.value;
+                      return (
+                        <button
+                          key={day.value}
+                          type="button"
+                          className={`barber-calendar-day ${isSelected ? 'active' : ''}`}
+                          onClick={async () => {
+                            setSlotDate(day.value);
+                            setLoadingSlots(true);
+                            setSlotsError('');
+                            try {
+                              const res = await api.get('/slots/my-slots', { params: { date: day.value } });
+                              setMySlots(res.data.data || []);
+                            } catch (err) { 
+                              console.error('Slot yükleme hatası:', err);
+                              setSlotsError(err.response?.data?.error || 'Slotlar yüklenemedi');
+                            } finally {
+                              setLoadingSlots(false);
+                            }
+                          }}
+                      >
+                            <span className="barber-calendar-day-name">{day.dayName}</span>
+                            <strong className="barber-calendar-day-number">{day.dayNumber}</strong>
+                            <span className="barber-calendar-day-month">{day.monthName}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                 </div>
 
                 {/* İstatistik Kartları */}

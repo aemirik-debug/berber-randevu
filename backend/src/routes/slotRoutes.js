@@ -8,6 +8,47 @@ const moment = require('moment');
 // Moment.js'i English locale'e ayarla
 moment.locale('en');
 
+async function pushAppointmentToCustomer({ customerId, customerPhone, appointment }) {
+  const Customer = require('../models/Customer');
+
+  let customer = null;
+  if (customerId) {
+    customer = await Customer.findById(customerId);
+  }
+
+  if (!customer && customerPhone) {
+    customer = await Customer.findOne({ phone: customerPhone });
+  }
+
+  if (!customer) {
+    return false;
+  }
+
+  customer.appointments.push(appointment);
+  await customer.save();
+  return true;
+}
+
+function buildCustomerAppointment(slot, extra = {}) {
+  const barberId = slot.barber?._id ? String(slot.barber._id) : String(slot.barber || '');
+
+  return {
+    slotId: String(slot._id),
+    barberId,
+    barberName: slot.barber?.name || extra.barberName || '',
+    date: slot.date,
+    time: slot.time,
+    service: {
+      name: extra.serviceName || (slot.customer && slot.customer.service) || 'Belirtilmemiş',
+      price: 0,
+      duration: 30
+    },
+    status: extra.status || 'Randevu Alındı',
+    createdAt: extra.createdAt || new Date(),
+    reminderSentAt: extra.reminderSentAt || null
+  };
+}
+
 // ===== TEST ENDPOINT - SLOT İSTATİSTİKLERİ =====
 router.get('/debug/stats', auth, async (req, res) => {
   try {
@@ -102,17 +143,9 @@ router.patch('/:slotId/action', auth, checkFeature('calendarBooking'), async (re
       try {
         const updateRes = await Customer.findByIdAndUpdate(req.body.customerId, {
           $push: {
-            appointments: {
-              barberName: slot.barber?.name || '',
-              date: slot.date,
-              time: slot.time,
-              service: {
-                name: req.body.service || (slot.customer && slot.customer.service) || 'Belirtilmemiş',
-                price: 0,
-                duration: 30
-              },
-              status: 'Randevu Alındı'
-            }
+            appointments: buildCustomerAppointment(slot, {
+              serviceName: req.body.service || (slot.customer && slot.customer.service) || 'Belirtilmemiş'
+            })
           }
         });
         console.log('Customer appointment push result for', req.body.customerId, updateRes ? 'ok' : 'not-found');
@@ -126,7 +159,14 @@ router.patch('/:slotId/action', auth, checkFeature('calendarBooking'), async (re
       const Customer = require('../models/Customer');
       await Customer.updateOne(
         { _id: slot.customer.customerId, 'appointments.date': slot.date, 'appointments.time': slot.time },
-        { $set: { 'appointments.$.status': action === 'cancel' ? 'cancelled' : 'confirmed' } }
+        {
+          $set: {
+            'appointments.$.status': action === 'cancel' ? 'cancelled' : 'confirmed',
+            'appointments.$.cancelReason': action === 'cancel'
+              ? (reason || 'Berber iptal etti')
+              : '',
+          }
+        }
       );
     }
 
@@ -271,17 +311,9 @@ router.post('/', auth, checkFeature('calendarBooking'), async (req, res) => {
       try {
         const updateRes = await Customer.findByIdAndUpdate(req.body.customerId, {
           $push: {
-            appointments: {
-              barberName: slot.barber?.name || '',
-              date: slot.date,
-              time: slot.time,
-              service: {
-                name: req.body.service || (slot.customer && slot.customer.service) || 'Belirtilmemiş',
-                price: 0,
-                duration: 30
-              },
-              status: 'Randevu Alındı'
-            }
+            appointments: buildCustomerAppointment(slot, {
+              serviceName: req.body.service || (slot.customer && slot.customer.service) || 'Belirtilmemiş'
+            })
           }
         });
         console.log('Customer appointment push result for', req.body.customerId, updateRes ? 'ok' : 'not-found');
@@ -474,30 +506,18 @@ router.patch('/:slotId/book', async (req, res) => {
 
     await slot.save();
     let pushSuccess = null;
-    if (req.body.customerId) {
-      const Customer = require('../models/Customer');
-      try {
-        const updateRes = await Customer.findByIdAndUpdate(req.body.customerId, {
-          $push: {
-            appointments: {
-              barberName: slot.barber?.name || '',
-              date: slot.date,
-              time: slot.time,
-              service: {
-                name: req.body.service || (slot.customer && slot.customer.service) || 'Belirtilmemiş',
-                price: 0,
-                duration: 30
-              },
-              status: 'Randevu Alındı'
-            }
-          }
-        });
-        pushSuccess = !!updateRes;
-        console.log('Customer appointment push result for', req.body.customerId, pushSuccess ? 'ok' : 'not-found');
-      } catch (e) {
-        pushSuccess = false;
-        console.warn('Customer appointment push failed:', e.message);
-      }
+    try {
+      pushSuccess = await pushAppointmentToCustomer({
+        customerId: req.body.customerId,
+        customerPhone: req.body.customerPhone,
+        appointment: buildCustomerAppointment(slot, {
+          serviceName: req.body.service || (slot.customer && slot.customer.service) || 'Belirtilmemiş'
+        })
+      });
+      console.log('Customer appointment push result for', req.body.customerId || req.body.customerPhone, pushSuccess ? 'ok' : 'not-found');
+    } catch (e) {
+      pushSuccess = false;
+      console.warn('Customer appointment push failed:', e.message);
     }
     
     res.json({
@@ -607,6 +627,71 @@ router.post('/create-manual', auth, checkFeature('calendarBooking'), async (req,
   }
 });
 
+router.post('/:slotId/remind-barber', auth, async (req, res) => {
+  try {
+    const slot = await Slot.findOne({ _id: req.params.slotId }).populate('barber');
+
+    if (!slot) {
+      return res.status(404).json({ success: false, error: 'Slot bulunamadı' });
+    }
+
+    const customerId = req.customerId || req.body.customerId;
+    const Customer = require('../models/Customer');
+    const customer = await Customer.findOne({
+      _id: customerId,
+      'appointments.slotId': String(slot._id)
+    });
+
+    if (!customerId || !customer) {
+      return res.status(403).json({ success: false, error: 'Bu randevu için bildirim gönderemezsiniz' });
+    }
+
+    const appointment = customer.appointments.find((item) => String(item.slotId) === String(slot._id));
+    const reminderSentAt = appointment?.reminderSentAt ? new Date(appointment.reminderSentAt).getTime() : 0;
+    const createdAt = appointment?.createdAt ? new Date(appointment.createdAt).getTime() : 0;
+    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+
+    if (!createdAt || createdAt > fiveMinutesAgo) {
+      return res.status(400).json({ success: false, error: 'Randevu oluşturulduktan 5 dakika sonra bildirim gönderilebilir' });
+    }
+
+    if (reminderSentAt && reminderSentAt > createdAt) {
+      return res.status(400).json({ success: false, error: 'Bu randevu için bildirim zaten gönderildi' });
+    }
+
+    const io = req.app.get('io');
+    const connectedBarbers = req.app.get('connectedBarbers');
+    const barberId = slot.barber?._id ? String(slot.barber._id) : String(slot.barber || '');
+    const barberSocketId = connectedBarbers?.get(barberId);
+
+    if (barberSocketId && io) {
+      io.to(barberSocketId).emit('customer_reminder', {
+        slotId: String(slot._id),
+        barberId,
+        barberName: slot.barber?.name || '',
+        customerId: String(customerId),
+        customerName: appointment?.customerName || req.body.customerName || 'Müşteri',
+        date: slot.date,
+        time: slot.time,
+        message: 'Müşteri randevu için hatırlatma gönderdi.'
+      });
+    }
+
+    await Customer.updateOne(
+      { _id: customerId, 'appointments.slotId': String(slot._id) },
+      { $set: { 'appointments.$.reminderSentAt': new Date() } }
+    );
+
+    return res.json({
+      success: true,
+      message: barberSocketId ? 'Hatırlatma gönderildi' : 'Berber çevrimdışı, hatırlatma kaydedildi',
+      delivered: Boolean(barberSocketId)
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Manuel oluşturulan randevuyu düzenle
 router.patch('/:slotId/edit', auth, checkFeature('calendarBooking'), async (req, res) => {
   try {
@@ -683,8 +768,22 @@ router.patch('/:slotId/cancel', auth, async (req, res) => {
 
     // Slot'u iptal et
     slot.status = 'cancelled';
-    slot.cancelReason = reason || 'Berber tarafından iptal edildi';
+    slot.cancelReason = reason || 'Berber iptal etti';
     await slot.save();
+
+    // müşteri randevusuna da iptal nedenini yansıt
+    if (slot.customer?.customerId) {
+      const Customer = require('../models/Customer');
+      await Customer.updateOne(
+        { _id: slot.customer.customerId, 'appointments.date': slot.date, 'appointments.time': slot.time },
+        {
+          $set: {
+            'appointments.$.status': 'cancelled',
+            'appointments.$.cancelReason': slot.cancelReason,
+          }
+        }
+      );
+    }
 
     res.json({
       success: true,

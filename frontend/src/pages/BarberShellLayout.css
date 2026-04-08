@@ -1,0 +1,592 @@
+/* Barber Dashboard Shell Layout - Customer Home inspired */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap');
+
+:root {
+  --cbk-charcoal: #2C3E50;
+  --cbk-blue: #3498db;
+  --cbk-blue-light: #5dade2;
+  --cbk-cream: #F5F5F0;
+  --cbk-copper: #B87333;
+  --cbk-leather: #8B4513;
+}
+
+.barber-shell {
+  background: var(--cbk-cream);
+  color: var(--cbk-charcoal);
+  font-family: 'Inter', sans-serif;
+  display: flex;
+  min-height: 100vh;
+}
+
+/* Sidebar */
+.barber-shell .sidebar {
+  background: linear-gradient(180deg, #fffdf9 0%, #f8f1e7 100%);
+  width: 280px;
+  flex-shrink: 0;
+  box-shadow: inset -1px 0 0 rgba(44, 62, 80, 0.08);
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.barber-shell .sidebar-logo {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.55rem;
+  font-weight: 700;
+  color: var(--cbk-charcoal);
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.barber-shell .sidebar-logo:hover {
+  color: var(--cbk-blue);
+}
+
+/* Sidebar Navigation */
+.barber-shell .sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: auto;
+}
+
+.barber-shell .sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  border: 0;
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--cbk-charcoal);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 1px rgba(44, 62, 80, 0.04);
+}
+
+.barber-shell .sidebar-nav-item:hover,
+.barber-shell .sidebar-nav-item:focus {
+  transform: translateX(4px);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 24px rgba(44, 62, 80, 0.08);
+}
+
+.barber-shell .sidebar-nav-item.active {
+  background: linear-gradient(135deg, rgba(52, 152, 219, 0.18) 0%, rgba(41, 128, 185, 0.12) 100%);
+  color: var(--cbk-blue);
+  box-shadow: 0 10px 24px rgba(52, 152, 219, 0.16);
+}
+
+.barber-shell .sidebar-nav-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.barber-shell .sidebar-nav-label {
+  flex-grow: 1;
+  text-align: left;
+}
+
+.barber-shell .sidebar-nav-badge {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Sidebar Footer */
+.barber-shell .sidebar-footer {
+  border-top: 1px dashed rgba(44, 62, 80, 0.12);
+  padding-top: 1rem;
+  text-align: center;
+}
+
+.barber-shell .sidebar-footer small {
+  color: rgba(44, 62, 80, 0.72);
+  font-size: 0.75rem;
+}
+
+/* Main Content */
+.barber-shell main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Top Bar */
+.barber-shell .topbar {
+  background: #ffffff;
+  border-bottom: 1px solid rgba(44, 62, 80, 0.08);
+  padding: 1rem 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(44, 62, 80, 0.04);
+}
+
+.barber-shell .topbar-logo {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--cbk-charcoal);
+  display: none;
+}
+
+.barber-shell .topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.barber-shell .topbar-action-btn {
+  border: 0;
+  background: rgba(52, 152, 219, 0.08);
+  color: var(--cbk-blue);
+  border-radius: 0.8rem;
+  padding: 0.6rem 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 1.1rem;
+}
+
+.barber-shell .topbar-action-btn:hover {
+  background: rgba(52, 152, 219, 0.16);
+  box-shadow: 0 8px 16px rgba(52, 152, 219, 0.12);
+}
+
+.barber-shell .topbar-profile {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.8rem;
+  background: rgba(52, 152, 219, 0.08);
+  cursor: pointer;
+}
+
+.barber-shell .topbar-profile-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #3498db, #2980b9);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.barber-shell .topbar-profile-name {
+  font-weight: 600;
+  color: var(--cbk-charcoal);
+  font-size: 0.9rem;
+}
+
+/* Content Area */
+.barber-shell .content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.barber-shell .page-title {
+  font-family: 'Playfair Display', serif;
+  color: var(--cbk-charcoal);
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.barber-shell .page-subtitle {
+  color: rgba(44, 62, 80, 0.72);
+  font-size: 0.95rem;
+  margin-bottom: 1.5rem;
+}
+
+/* Mobile responsive */
+@media (max-width: 767.98px) {
+  .barber-shell {
+    flex-direction: column;
+  }
+
+  .barber-shell .sidebar {
+    width: 100%;
+    height: auto;
+    padding: 1rem;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+    box-shadow: inset 0 -1px 0 rgba(44, 62, 80, 0.08);
+  }
+
+  .barber-shell .sidebar-logo {
+    margin-bottom: 0;
+    font-size: 1.2rem;
+  }
+
+  .barber-shell .sidebar-nav {
+    display: none;
+  }
+
+  .barber-shell .sidebar-footer {
+    display: none;
+  }
+
+  .barber-shell .topbar {
+    padding: 0.8rem 1rem;
+  }
+
+  .barber-shell .topbar-logo {
+    display: block;
+  }
+
+  .barber-shell .mobile-menu-toggle {
+    background: rgba(52, 152, 219, 0.08);
+    color: var(--cbk-blue);
+    border: 0;
+    border-radius: 0.8rem;
+    padding: 0.6rem 0.8rem;
+    cursor: pointer;
+    font-size: 1.2rem;
+  }
+
+  .barber-shell .content {
+    padding: 1rem;
+  }
+
+  .barber-shell .page-title {
+    font-size: 1.4rem;
+  }
+}
+
+/* Cards */
+.barber-shell .section-title {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--cbk-charcoal);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 1rem;
+}
+
+.barber-shell .info-card {
+  border: 1px solid rgba(52, 152, 219, 0.12);
+  border-radius: 1rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(236, 247, 255, 0.92));
+  padding: 1rem;
+  box-shadow: 0 10px 24px rgba(52, 152, 219, 0.04);
+}
+
+.barber-shell .stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.barber-shell .stat-card {
+  border: 1px solid rgba(52, 152, 219, 0.12);
+  border-radius: 1rem;
+  background: linear-gradient(135deg, rgba(52, 152, 219, 0.08), rgba(41, 128, 185, 0.04));
+  padding: 1rem;
+  box-shadow: 0 8px 16px rgba(52, 152, 219, 0.06);
+}
+
+.barber-shell .stat-card-label {
+  font-size: 0.8rem;
+  color: rgba(44, 62, 80, 0.72);
+  text-transform: uppercase;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.barber-shell .stat-card-value {
+  font-size: 1.8rem;
+  color: var(--cbk-blue);
+  font-weight: 800;
+}
+
+/* Mobile Menu Overlay */
+@media (max-width: 767.98px) {
+  .barber-shell.show-mobile-menu::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 998;
+  }
+
+  .barber-shell .sidebar.show {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 280px;
+    height: 100%;
+    z-index: 999;
+    flex-direction: column;
+  }
+}
+
+/* Services Grid - from BarberDashboard.css */
+.barber-shell .barber-service-picker {
+  border: 1px solid rgba(52, 152, 219, 0.12);
+  border-radius: 1rem;
+  padding: 1rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(236, 247, 255, 0.92));
+  box-shadow: 0 10px 24px rgba(52, 152, 219, 0.06);
+}
+
+.barber-shell .barber-service-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.barber-shell .barber-service-form input {
+  border-radius: 0.8rem;
+  border: 1px solid rgba(52, 152, 219, 0.16);
+  padding: 0.68rem 0.85rem;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.barber-shell .barber-service-form input:focus {
+  border-color: rgba(52, 152, 219, 0.55);
+  box-shadow: 0 0 0 0.18rem rgba(52, 152, 219, 0.12);
+}
+
+.barber-shell .barber-service-form button {
+  border-radius: 0.8rem;
+  font-weight: 700;
+  min-height: 2.8rem;
+}
+
+.barber-shell .barber-service-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.barber-shell .barber-service-card {
+  border: 1px solid rgba(52, 152, 219, 0.12);
+  border-radius: 1rem;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(236, 247, 255, 0.84));
+  padding: 1rem;
+  box-shadow: 0 10px 24px rgba(52, 152, 219, 0.06);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.barber-shell .barber-service-card:hover {
+  border-color: rgba(52, 152, 219, 0.35);
+  box-shadow: 0 16px 32px rgba(52, 152, 219, 0.12);
+}
+
+.barber-shell .barber-service-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.barber-shell .barber-service-card-icon {
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(52, 152, 219, 0.16), rgba(41, 128, 185, 0.12));
+  color: #3498db;
+  font-size: 0.95rem;
+  flex: 0 0 auto;
+}
+
+.barber-shell .barber-service-card-name {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #2C3E50;
+  flex: 1;
+}
+
+.barber-shell .barber-service-card-body {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.9rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid rgba(52, 152, 219, 0.1);
+}
+
+.barber-shell .barber-service-card-price,
+.barber-shell .barber-service-card-duration {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.barber-shell .barber-service-card-price label,
+.barber-shell .barber-service-card-duration label {
+  font-size: 0.72rem;
+  color: rgba(44, 62, 80, 0.72);
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.barber-shell .barber-service-card-price strong,
+.barber-shell .barber-service-card-duration strong {
+  font-size: 1.1rem;
+  color: #3498db;
+}
+
+.barber-shell .barber-service-card-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.barber-shell .barber-service-card-actions button {
+  flex: 1;
+  border: 0;
+  border-radius: 0.7rem;
+  padding: 0.55rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.barber-shell .barber-service-card-actions .edit-btn {
+  background: linear-gradient(135deg, rgba(52, 152, 219, 0.14), rgba(41, 128, 185, 0.1));
+  color: #3498db;
+}
+
+.barber-shell .barber-service-card-actions .edit-btn:hover {
+  background: linear-gradient(135deg, rgba(52, 152, 219, 0.25), rgba(41, 128, 185, 0.18));
+}
+
+.barber-shell .barber-service-card-actions .delete-btn {
+  background: linear-gradient(135deg, rgba(231, 76, 60, 0.14), rgba(192, 57, 43, 0.1));
+  color: #e74c3c;
+}
+
+.barber-shell .barber-service-card-actions .delete-btn:hover {
+  background: linear-gradient(135deg, rgba(231, 76, 60, 0.25), rgba(192, 57, 43, 0.18));
+}
+
+/* Calendar Mini Calendar */
+.barber-shell .barber-mini-calendar {
+  border: 1px solid rgba(52, 152, 219, 0.12);
+  border-radius: 1rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(236, 247, 255, 0.88));
+  padding: 0.85rem;
+}
+
+.barber-shell .barber-calendar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.8rem;
+}
+
+.barber-shell .barber-calendar-title {
+  font-size: 1rem;
+  font-weight: 800;
+  color: #2C3E50;
+}
+
+.barber-shell .barber-calendar-subtitle {
+  color: rgba(52, 152, 219, 0.8);
+  font-size: 0.8rem;
+}
+
+.barber-shell .barber-calendar-pill {
+  padding: 0.3rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(52, 152, 219, 0.14);
+  color: #3498db;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.barber-shell .barber-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.barber-shell .barber-calendar-day {
+  border: 1px solid rgba(52, 152, 219, 0.12);
+  border-radius: 0.95rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(236, 247, 255, 0.8));
+  padding: 0.6rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  min-height: 4.2rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.barber-shell .barber-calendar-day:hover {
+  border-color: rgba(52, 152, 219, 0.35);
+}
+
+.barber-shell .barber-calendar-day-name {
+  font-size: 0.68rem;
+  color: rgba(52, 152, 219, 0.8);
+  font-weight: 700;
+}
+
+.barber-shell .barber-calendar-day-number {
+  font-size: 1.1rem;
+  color: #2C3E50;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.barber-shell .barber-calendar-day-month {
+  font-size: 0.7rem;
+  color: rgba(52, 152, 219, 0.72);
+}
+
+.barber-shell .barber-calendar-day.active {
+  border-color: rgba(52, 152, 219, 0.64);
+  background: linear-gradient(180deg, rgba(52, 152, 219, 0.18), rgba(41, 128, 185, 0.1));
+  box-shadow: 0 12px 20px rgba(52, 152, 219, 0.12);
+}
+
+.barber-shell .barber-calendar-day.active .barber-calendar-day-number {
+  color: #3498db;
+}
+
+/* Responsive */
+@media (max-width: 991.98px) {
+  .barber-shell .barber-service-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .barber-shell .barber-calendar-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .barber-shell .barber-service-form {
+    grid-template-columns: 1fr;
+  }
+}

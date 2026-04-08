@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Customer = require('../models/Customer');
+const Slot = require('../models/Slot');
 const jwt = require('jsonwebtoken');
 const authMiddleware = require('../middleware/authMiddleware');
 
@@ -127,6 +128,147 @@ router.post('/appointments/:id', authMiddleware, async (req, res) => {
     await customer.save();
 
     res.json({ message: 'Randevu başarıyla oluşturuldu', appointments: customer.appointments });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+// Müşteri randevu iptali (PROTECTED)
+router.patch('/appointments/:id/:appointmentId/cancel', authMiddleware, async (req, res) => {
+  try {
+    if (!ensureCustomerAccess(req, res)) return;
+
+    const customer = await Customer.findById(req.params.id);
+    if (!customer) {
+      return res.status(404).json({ message: 'Müşteri bulunamadı' });
+    }
+
+    const appointment = customer.appointments.id(req.params.appointmentId);
+    if (!appointment) {
+      return res.status(404).json({ message: 'Randevu bulunamadı' });
+    }
+
+    const statusLc = String(appointment.status || '').toLowerCase();
+    if (statusLc === 'cancelled' || statusLc === 'reddedildi') {
+      return res.status(400).json({ message: 'Randevu zaten iptal edilmiş' });
+    }
+
+    if (appointment.slotId) {
+      const slot = await Slot.findById(appointment.slotId);
+      if (slot) {
+        const slotCustomerId = slot.customer?.customerId ? String(slot.customer.customerId) : '';
+        if (!slotCustomerId || slotCustomerId === String(req.customerId)) {
+          slot.status = 'available';
+          slot.cancelReason = 'Müşteri tarafından iptal edildi';
+          slot.customer = undefined;
+          slot.payment = { isPaid: false, amount: 0 };
+          slot.updatedAt = new Date();
+          await slot.save();
+        }
+      }
+    }
+
+    appointment.status = 'cancelled';
+    appointment.cancelReason = 'Müşteri tarafından iptal edildi';
+    appointment.reminderSentAt = null;
+    await customer.save();
+
+    return res.json({
+      message: 'Randevu iptal edildi',
+      appointment
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+// Müşteri randevu düzenleme (yeniden planlama) (PROTECTED)
+router.patch('/appointments/:id/:appointmentId/reschedule', authMiddleware, async (req, res) => {
+  try {
+    if (!ensureCustomerAccess(req, res)) return;
+
+    const { targetSlotId } = req.body;
+    if (!targetSlotId) {
+      return res.status(400).json({ message: 'Yeni slot seçimi zorunlu' });
+    }
+
+    const customer = await Customer.findById(req.params.id);
+    if (!customer) {
+      return res.status(404).json({ message: 'Müşteri bulunamadı' });
+    }
+
+    const appointment = customer.appointments.id(req.params.appointmentId);
+    if (!appointment) {
+      return res.status(404).json({ message: 'Randevu bulunamadı' });
+    }
+
+    const statusLc = String(appointment.status || '').toLowerCase();
+    if (statusLc === 'cancelled' || statusLc === 'reddedildi') {
+      return res.status(400).json({ message: 'İptal edilen randevu düzenlenemez' });
+    }
+
+    if (!appointment.barberId) {
+      return res.status(400).json({ message: 'Bu randevu için düzenleme desteklenmiyor' });
+    }
+
+    const targetSlot = await Slot.findById(targetSlotId).populate('barber');
+    if (!targetSlot) {
+      return res.status(404).json({ message: 'Seçilen slot bulunamadı' });
+    }
+
+    if (targetSlot.status !== 'available') {
+      return res.status(400).json({ message: 'Seçilen slot artık müsait değil' });
+    }
+
+    const targetBarberId = targetSlot.barber?._id ? String(targetSlot.barber._id) : String(targetSlot.barber || '');
+    if (String(appointment.barberId) !== targetBarberId) {
+      return res.status(400).json({ message: 'Sadece aynı berberin slotlarına taşınabilir' });
+    }
+
+    if (appointment.slotId) {
+      const oldSlot = await Slot.findById(appointment.slotId);
+      if (oldSlot) {
+        const oldSlotCustomerId = oldSlot.customer?.customerId ? String(oldSlot.customer.customerId) : '';
+        if (!oldSlotCustomerId || oldSlotCustomerId === String(req.customerId)) {
+          oldSlot.status = 'available';
+          oldSlot.cancelReason = 'Müşteri tarafından yeniden planlandı';
+          oldSlot.customer = undefined;
+          oldSlot.payment = { isPaid: false, amount: 0 };
+          oldSlot.updatedAt = new Date();
+          await oldSlot.save();
+        }
+      }
+    }
+
+    const customerName = `${customer.name || ''} ${customer.surname || ''}`.trim() || customer.phone || 'Müşteri';
+    targetSlot.status = 'booked';
+    targetSlot.cancelReason = '';
+    targetSlot.customer = {
+      customerId: customer._id,
+      phone: customer.phone,
+      name: customerName,
+      service: appointment.service?.name || 'Belirtilmemiş',
+      notes: '',
+      isHomeService: false
+    };
+    targetSlot.updatedAt = new Date();
+    await targetSlot.save();
+
+    appointment.slotId = String(targetSlot._id);
+    appointment.barberId = targetBarberId;
+    appointment.barberName = targetSlot.barber?.name || appointment.barberName;
+    appointment.date = targetSlot.date;
+    appointment.time = targetSlot.time;
+    appointment.status = 'Randevu Alındı';
+    appointment.createdAt = new Date();
+    appointment.reminderSentAt = null;
+    appointment.cancelReason = '';
+    await customer.save();
+
+    return res.json({
+      message: 'Randevu yeniden planlandı',
+      appointment
+    });
   } catch (err) {
     res.status(400).json({ message: err.message });
   }

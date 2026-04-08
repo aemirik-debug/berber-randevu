@@ -4,6 +4,7 @@ import CustomerHome from './pages/CustomerHome';
 import BarberLogin from './pages/BarberLogin';
 import BarberRegister from './pages/BarberRegister';
 import BarberDashboard from './pages/BarberDashboard';
+import BarberHome from './pages/BarberHome';
 import CustomerAuth from './components/CustomerAuth';
 import BookingPage from './pages/BookingPage';
 import 'bootstrap/dist/css/bootstrap.min.css';
@@ -63,7 +64,7 @@ function App() {
             path="/barber/dashboard"
             element={(
               <BarberProtectedRoute>
-                <BarberDashboard />
+                <BarberHome />
               </BarberProtectedRoute>
             )}
           />

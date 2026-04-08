@@ -7,8 +7,12 @@ const customerSchema = new mongoose.Schema({
   surname: { type: String },
   email: { type: String },
   address: { type: String },
+  city: { type: String },
+  district: { type: String },
 // Randevular
   appointments: [{
+    slotId: String,
+    barberId: String,
     barberName: String,
     date: String,
     time: String,
@@ -17,7 +21,10 @@ const customerSchema = new mongoose.Schema({
       price: Number,
       duration: Number
     },
-    status: { type: String, default: 'pending' }
+    status: { type: String, default: 'pending' },
+    createdAt: Date,
+    reminderSentAt: Date,
+    cancelReason: String
   }],
 
   // Faturalar

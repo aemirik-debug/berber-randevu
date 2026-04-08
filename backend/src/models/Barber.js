@@ -9,6 +9,7 @@ const BarberSchema = new mongoose.Schema({
   address: { type: String, required: true },
   city: { type: String, required: true },
   district: { type: String, required: true },
+  logoUrl: { type: String, default: '' },
   password: { type: String, required: true },
   location: {
     type: { type: String, enum: ['Point'], default: 'Point' },
@@ -66,6 +67,16 @@ const BarberSchema = new mongoose.Schema({
       name: { type: String, required: true },
       price: { type: Number, required: true },
       duration: { type: Number, default: 0 } // dakikayla
+    }
+  ],
+  reviews: [
+    {
+      customerId: { type: String, required: true },
+      customerName: { type: String, default: 'Müşteri' },
+      rating: { type: Number, min: 1, max: 5, required: true },
+      comment: { type: String, default: '' },
+      createdAt: { type: Date, default: Date.now },
+      updatedAt: { type: Date, default: Date.now }
     }
   ]
 });

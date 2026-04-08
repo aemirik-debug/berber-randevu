@@ -12,6 +12,7 @@ function BarberProfile() {
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('');
   const [district, setDistrict] = useState('');
+  const [logoUrl, setLogoUrl] = useState('');
   const [subscriptionPlan, setSubscriptionPlan] = useState('');
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
@@ -37,6 +38,7 @@ function BarberProfile() {
         setAddress(data.address);
         setCity(data.city);
         setDistrict(data.district);
+        setLogoUrl(data.logoUrl || '');
         setSubscriptionPlan(data.subscription?.plan || 'basic');
       } catch (err) {
         showNotification(err.response?.data?.error || err.message, 'error');
@@ -63,7 +65,8 @@ function BarberProfile() {
         email,
         address,
         city,
-        district
+        district,
+        logoUrl
       }, {
         headers: { Authorization: `Bearer ${localStorage.getItem('barberToken')}` }
       });
@@ -180,6 +183,24 @@ function BarberProfile() {
                           value={salonName}
                           onChange={(e) => setSalonName(e.target.value)}/>
                       </div>
+                    </div>
+
+                    {/* Logo URL */}
+                    <div className="col-md-6">
+                      <label className="form-label fw-semibold small text-uppercase text-muted">Salon Logo URL</label>
+                      <div className="input-group">
+                        <span className="input-group-text bg-light border-end-0">
+                          <span style={{color: '#3498db'}}>🖼️</span>
+                        </span>
+                        <input
+                          type="url"
+                          className="form-control border-start-0 ps-0"
+                          placeholder="https://ornek-site.com/logo.png"
+                          value={logoUrl}
+                          onChange={(e) => setLogoUrl(e.target.value)}
+                        />
+                      </div>
+                      <small className="text-muted">Boş bırakılırsa müşteriye örnek logo gösterilir.</small>
                     </div>
 
                     {/* Yetkili Adı */}
