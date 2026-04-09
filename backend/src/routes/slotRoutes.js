@@ -472,7 +472,7 @@ router.patch('/:slotId/status', auth, checkFeature('calendarBooking'), async (re
 // Müşteri slot rezervasyonu (auth'suz, herkes kullanabilir)
 router.patch('/:slotId/book', async (req, res) => {
   try {
-    const { customerPhone, customerName, service, customerId } = req.body;
+    const { customerPhone, customerName, service, customerId, price } = req.body;
     console.log('booking request body:', req.body);
     
     const slot = await Slot.findOne({
@@ -502,6 +502,10 @@ router.patch('/:slotId/book', async (req, res) => {
       name: customerName || 'İsimsiz',
       service: service || 'Belirtilmemiş',
       isHomeService: false
+    };
+    slot.payment = {
+      isPaid: Number(price) > 0,
+      amount: Number(price) || 0
     };
 
     await slot.save();

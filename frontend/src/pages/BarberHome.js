@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import BarberProfile from './BarberProfile';
@@ -10,8 +10,17 @@ import api from '../services/api';
 import { connectSocket, disconnectSocket } from '../services/socket';
 import './BarberShellLayout.css';
 
+const WEEK_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+const toLocalDateInput = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 function BarberHome() {
   const navigate = useNavigate();
+  const headerMenuRef = useRef(null);
   const [activeSection, setActiveSection] = useState('home');
   const [barber, setBarber] = useState({ subscription: { plan: 'basic', expiresAt: new Date() } });
   const [services, setServices] = useState([]);
@@ -21,7 +30,8 @@ function BarberHome() {
   const [serviceMessage, setServiceMessage] = useState({ text: '', type: 'success' });
   const [actionMessage, setActionMessage] = useState({ text: '', type: 'success' });
   const [mySlots, setMySlots] = useState([]);
-  const [slotDate, setSlotDate] = useState(new Date().toISOString().split('T')[0]);
+  const [dashboardSlots, setDashboardSlots] = useState([]);
+  const [slotDate, setSlotDate] = useState(toLocalDateInput(new Date()));
   const [showSlotDetails, setShowSlotDetails] = useState(false);
   const [slotDetailsData, setSlotDetailsData] = useState(null);
   const [showCreateManualSlot, setShowCreateManualSlot] = useState(false);
@@ -31,6 +41,8 @@ function BarberHome() {
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [slotsError, setSlotsError] = useState('');
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const todayIso = useMemo(() => toLocalDateInput(new Date()), []);
 
   const barberInitials = `${(barber?.name?.[0] || 'B')}${(barber?.surname?.[0] || 'R')}`.toUpperCase();
 
@@ -39,7 +51,7 @@ function BarberHome() {
     { key: 'services', label: 'Hizmetler', icon: '✂️', count: services.length },
     { key: 'calendar', label: 'Takvim', icon: '📅' },
     { key: 'stats', label: 'İstatistikler', icon: '📊' },
-    { key: 'settings', label: 'Ayarlar', icon: '⚙️' },
+    { key: 'settings', label: 'Mağaza Ayarları', icon: '⚙️' },
   ];
 
   // Message cleanup
@@ -56,6 +68,17 @@ function BarberHome() {
       return () => clearTimeout(t);
     }
   }, [actionMessage]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (!headerMenuRef.current?.contains(event.target)) {
+        setShowProfileMenu(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Load profile and services
   useEffect(() => {
@@ -77,6 +100,14 @@ function BarberHome() {
         ]);
         setBarber(profRes.data);
         setServices(svcRes.data.services || []);
+
+        try {
+          const slotsRes = await api.get('/slots/my-slots', { params: { date: todayIso } });
+          setDashboardSlots(slotsRes.data.data || []);
+        } catch (slotErr) {
+          console.error('Bugünün slotları yüklenemedi', slotErr);
+          setDashboardSlots([]);
+        }
       } catch (err) {
         console.error('Veri yükleme hatası', err);
         if (err.response?.status === 401) {
@@ -92,7 +123,7 @@ function BarberHome() {
       socket.off('customer_reminder');
       disconnectSocket();
     };
-  }, [navigate]);
+  }, [navigate, todayIso]);
 
   // Load slots when calendar section is active
   useEffect(() => {
@@ -114,14 +145,52 @@ function BarberHome() {
     }
   }, [activeSection, slotDate]);
 
+  // Keep home dashboard counters in sync with DB changes.
+  useEffect(() => {
+    if (activeSection !== 'home') {
+      return;
+    }
+
+    const loadHomeSlots = async () => {
+      try {
+        const res = await api.get('/slots/my-slots', { params: { date: todayIso } });
+        setDashboardSlots(res.data.data || []);
+      } catch (err) {
+        console.error('Ana sayfa slot tazeleme hatası', err);
+      }
+    };
+
+    loadHomeSlots();
+    const timer = setInterval(loadHomeSlots, 15000);
+    return () => clearInterval(timer);
+  }, [activeSection, todayIso]);
+
+  // Refresh profile when coming back to home so dashboard stats stay in sync with ShopSettings changes.
+  useEffect(() => {
+    if (activeSection !== 'home') {
+      return;
+    }
+
+    const refreshProfileForHome = async () => {
+      try {
+        const res = await api.get('/barbers/profile');
+        setBarber(res.data || {});
+      } catch (err) {
+        console.error('Ana sayfa profil tazeleme hatası', err);
+      }
+    };
+
+    refreshProfileForHome();
+  }, [activeSection]);
+
   const calendarDays = useMemo(() => {
     const startDate = new Date();
     startDate.setHours(0, 0, 0, 0);
-    return Array.from({ length: 14 }, (_, index) => {
+    return Array.from({ length: 5 }, (_, index) => {
       const currentDate = new Date(startDate);
       currentDate.setDate(startDate.getDate() + index);
       return {
-        value: currentDate.toISOString().split('T')[0],
+        value: toLocalDateInput(currentDate),
         dayName: new Intl.DateTimeFormat('tr-TR', { weekday: 'short' }).format(currentDate),
         monthName: new Intl.DateTimeFormat('tr-TR', { month: 'short' }).format(currentDate),
         dayNumber: new Intl.DateTimeFormat('tr-TR', { day: '2-digit' }).format(currentDate),
@@ -129,10 +198,139 @@ function BarberHome() {
     });
   }, []);
 
+  const activeWorkingDays = useMemo(() => {
+    const hours = barber?.workingHours || {};
+    return WEEK_DAYS.filter((dayKey) => {
+      const day = hours[dayKey];
+      return day?.isOpen === true || String(day?.isOpen).toLowerCase() === 'true';
+    }).length;
+  }, [barber]);
+  const closedWorkingDays = useMemo(() => Math.max(0, WEEK_DAYS.length - activeWorkingDays), [activeWorkingDays]);
+  const hasWorkingDayStatusData = useMemo(() => {
+    const hours = barber?.workingHours || {};
+    return WEEK_DAYS.every((dayKey) => {
+      const day = hours[dayKey];
+      return day
+        && typeof day.isOpen !== 'undefined'
+        && String(day.open || '').trim()
+        && String(day.close || '').trim();
+    });
+  }, [barber]);
+  const profileFieldsCompletion = useMemo(() => {
+    const emailFilled = String(barber?.email || '').trim().length > 0;
+    const completedParts = [emailFilled, hasWorkingDayStatusData].filter(Boolean).length;
+    return Math.round((completedParts / 2) * 100);
+  }, [barber, hasWorkingDayStatusData]);
+  const dashboardAppointmentStats = useMemo(() => {
+    const newRequests = dashboardSlots.filter((slot) => String(slot.status || '').toLowerCase() === 'booked').length;
+    const confirmed = dashboardSlots.filter((slot) => String(slot.status || '').toLowerCase() === 'confirmed').length;
+    const available = dashboardSlots.filter((slot) => String(slot.status || '').toLowerCase() === 'available').length;
+    const cancelled = dashboardSlots.filter((slot) => ['cancelled', 'rejected', 'reddedildi'].includes(String(slot.status || '').toLowerCase())).length;
+    return {
+      total: dashboardSlots.length,
+      newRequests,
+      confirmed,
+      available,
+      cancelled,
+    };
+  }, [dashboardSlots]);
+  const dashboardRevenueEstimate = useMemo(() => {
+    return dashboardSlots.reduce((sum, slot) => {
+      if (String(slot.status || '').toLowerCase() !== 'confirmed') {
+        return sum;
+      }
+
+      const slotRevenue = Number(
+        slot.manualPrice
+        ?? slot.payment?.amount
+        ?? slot.service?.price
+        ?? slot.customer?.totalPrice
+        ?? 0
+      ) || 0;
+
+      return sum + slotRevenue;
+    }, 0);
+  }, [dashboardSlots]);
+  const profileStatusCards = useMemo(() => {
+    const emailFilled = String(barber?.email || '').trim();
+    return [
+      {
+        key: 'email',
+        icon: '✉️',
+        title: 'E-posta',
+        value: emailFilled ? emailFilled : 'Eksik',
+        tone: emailFilled ? 'success' : 'warning',
+        description: emailFilled ? 'Kaydedildi ve kilitli' : 'Bir kez eklenebilir',
+      },
+      {
+        key: 'hours',
+        icon: '⏰',
+        title: 'Açık/Kapalı Gün',
+        value: `${activeWorkingDays} açık • ${closedWorkingDays} kapalı`,
+        tone: activeWorkingDays > 0 ? 'success' : 'warning',
+        description: activeWorkingDays > 0 ? 'Mağaza ayarlarına göre güncel' : 'Çalışma saatlerini tamamlayın',
+      },
+      {
+        key: 'phone',
+        icon: '📱',
+        title: 'Telefon Numarası',
+        value: String(barber?.phone || '').trim() || 'Eksik',
+        tone: String(barber?.phone || '').trim() ? 'success' : 'warning',
+        description: String(barber?.phone || '').trim() ? 'Kayıtlı ve doğrulanmış' : 'Telefon bilgisi eksik',
+      },
+      {
+        key: 'profile',
+        icon: '🧩',
+        title: 'Durum Tamamlığı',
+        value: `%${profileFieldsCompletion}`,
+        tone: profileFieldsCompletion >= 80 ? 'success' : 'warning',
+        description: 'E-posta + açık/kapalı gün bilgisi doluluk oranı',
+      },
+    ];
+  }, [barber, activeWorkingDays, closedWorkingDays, profileFieldsCompletion]);
+
+  const businessAlerts = useMemo(() => {
+    const alerts = [];
+    if (!String(barber?.email || '').trim()) {
+      alerts.push({ key: 'email', icon: '✉️', tone: 'warning', title: 'E-posta eksik', text: 'Müşteri tarafı ve güvenlik akışı için e-posta ekleyin.' });
+    }
+    if (activeWorkingDays === 0) {
+      alerts.push({ key: 'hours', icon: '⏰', tone: 'danger', title: 'Çalışma saatleri yok', text: 'Takvim ve slot üretimi için çalışma günlerini açın.' });
+    }
+    if (!barber?.features?.calendarBooking) {
+      alerts.push({ key: 'calendar', icon: '📅', tone: 'warning', title: 'Takvim kapalı', text: 'Müşterilerin randevu alabilmesi için takvimi açın.' });
+    }
+    if (!services.length) {
+      alerts.push({ key: 'services', icon: '✂️', tone: 'info', title: 'Hizmet yok', text: 'İlk hizmetinizi ekleyerek satış akışını başlatın.' });
+    }
+    return alerts;
+  }, [barber, activeWorkingDays, services.length]);
+
+  const quickActions = useMemo(() => ([
+    { key: 'create-appointment', label: 'Randevu Oluştur', icon: '🗓️', description: 'Saat seçip müşteri ekleyerek slotu doldur', action: () => setActiveSection('calendar') },
+    { key: 'calendar', label: 'Takvime Git', icon: '📅', description: 'Boş slotları kontrol et', action: () => setActiveSection('calendar') },
+    { key: 'profile', label: 'Profili Tamamla', icon: '👤', description: 'İletişim ve e-posta bilgileri', action: () => setActiveSection('profile') },
+    { key: 'settings', label: 'Mağaza Ayarları', icon: '⚙️', description: 'Çalışma saatleri ve takvim', action: () => setActiveSection('settings') },
+  ]), []);
+
   const handleLogout = () => {
     localStorage.removeItem('barberToken');
     localStorage.removeItem('barberId');
     navigate('/barber/login');
+  };
+
+  const loadSlotsForDate = async (dateStr) => {
+    setLoadingSlots(true);
+    setSlotsError('');
+    try {
+      const res = await api.get('/slots/my-slots', { params: { date: dateStr } });
+      setMySlots(res.data.data || []);
+    } catch (err) {
+      setSlotsError(err.response?.data?.error || 'Slotlar yüklenemedi');
+      setMySlots([]);
+    } finally {
+      setLoadingSlots(false);
+    }
   };
 
   const handleAddService = async (e) => {
@@ -200,6 +398,15 @@ function BarberHome() {
 
   return (
     <div className={`barber-shell ${showMobileMenu ? 'show-mobile-menu' : ''}`}>
+      {showMobileMenu && (
+        <button
+          type="button"
+          className="mobile-menu-overlay"
+          aria-label="Menüyü kapat"
+          onClick={() => setShowMobileMenu(false)}
+        />
+      )}
+
       {/* Sidebar */}
       <aside className={`sidebar ${showMobileMenu ? 'show' : ''}`}>
         <div className="sidebar-logo">✂️ Berber Paneli</div>
@@ -223,22 +430,52 @@ function BarberHome() {
             ☰
           </button>
 
-          <div className="topbar-actions">
+          <div className="topbar-actions" ref={headerMenuRef}>
             <button type="button" className="topbar-action-btn" title="Bildirimler">
               🔔
             </button>
-            <div className="topbar-profile" onClick={() => setActiveSection('settings')}>
-              <div className="topbar-profile-avatar">{barberInitials}</div>
-              <div className="topbar-profile-name">{barber?.salonName || 'Berber'}</div>
-            </div>
             <button
               type="button"
-              className="topbar-action-btn"
-              onClick={handleLogout}
-              title="Çıkış Yap"
+              className="topbar-profile"
+              onClick={() => setShowProfileMenu((prev) => !prev)}
+              aria-label="Profil menüsü"
             >
-              🚪
+              <div className="topbar-profile-avatar">{barberInitials}</div>
+              <div className="topbar-profile-name">{barber?.salonName || 'Berber'}</div>
             </button>
+
+            {showProfileMenu && (
+              <div className="topbar-menu-pop card shadow-sm">
+                <div className="card-body">
+                  <h6 className="card-title mb-3">Berber Hesabı</h6>
+                  <p className="mb-1"><strong>Ad Soyad:</strong> {barber?.name || '-'} {barber?.surname || ''}</p>
+                  <p className="mb-1"><strong>Salon:</strong> {barber?.salonName || '-'}</p>
+                  <p className="mb-3"><strong>E-posta:</strong> {barber?.email || '-'}</p>
+                  <div className="d-flex gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-outline-primary btn-sm"
+                      onClick={() => {
+                        setActiveSection('profile');
+                        setShowProfileMenu(false);
+                      }}
+                    >
+                      Profil Bilgilerim
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-danger btn-sm ms-auto"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        handleLogout();
+                      }}
+                    >
+                      Çıkış Yap
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -246,31 +483,181 @@ function BarberHome() {
         <div className="content">
           {/* Main Section */}
           {activeSection === 'home' && (
-            <div>
-              <h1 className="page-title">Hoş Geldiniz, {barber?.salonName || 'Berber'}</h1>
-              <p className="page-subtitle">
-                {barber.subscription?.plan?.toUpperCase()} paketiniz - Bitiş: {new Date(barber.subscription?.expiresAt).toLocaleDateString()}
-              </p>
+            <div className="barber-home-dashboard">
+              <div className="barber-home-hero">
+                <div className="barber-home-hero-copy">
+                  <div className="barber-home-kicker">İşletme Kontrol Merkezi</div>
+                  <h1 className="page-title barber-home-title">Hoş geldiniz, {barber?.salonName || 'Berber'}</h1>
+                  <p className="page-subtitle barber-home-subtitle">
+                    {barber.subscription?.plan?.toUpperCase()} paketiniz aktif. Bugünün doluluğunu, hızlı aksiyonları ve profil eksiklerini tek ekranda görün.
+                  </p>
+                  <div className="barber-home-meta">
+                    <span className="barber-home-pill">Plan: {barber.subscription?.plan || 'basic'}</span>
+                    <span className="barber-home-pill">E-posta: {String(barber?.email || '').trim() ? 'Tamam' : 'Eksik'}</span>
+                    <span className="barber-home-pill">Çalışma günü: {activeWorkingDays}</span>
+                  </div>
+                </div>
 
-              <div className="stat-grid">
-                <div className="stat-card">
-                  <div className="stat-card-label">📅 Bugünün Randevuları</div>
-                  <div className="stat-card-value">{mySlots.length || 0}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="stat-card-label">✂️ Toplam Hizmet</div>
-                  <div className="stat-card-value">{services.length}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="stat-card-label">⭐ Puanınız</div>
-                  <div className="stat-card-value">4.9</div>
+                <div className="barber-home-hero-stat">
+                  <div className="barber-home-hero-stat-label">Bugünkü onaylı ciro</div>
+                  <div className="barber-home-hero-stat-value">₺{dashboardRevenueEstimate.toLocaleString('tr-TR')}</div>
+                  <div className="barber-home-hero-stat-subtitle">Onaylı randevu fiyatlarının toplamı</div>
                 </div>
               </div>
 
-              <div className="info-card">
-                <h4>Üyelik Bilgileri</h4>
-                <p><strong>Plan:</strong> {barber.subscription?.plan}</p>
-                <p><strong>Bitiş Tarihi:</strong> {new Date(barber.subscription?.expiresAt).toLocaleDateString('tr-TR')}</p>
+              <div className="barber-home-actions-grid">
+                {quickActions.map((item) => (
+                  <button key={item.key} type="button" className="barber-home-action-card" onClick={item.action}>
+                    <span className="barber-home-action-icon">{item.icon}</span>
+                    <span className="barber-home-action-body">
+                      <strong>{item.label}</strong>
+                      <small>{item.description}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="stat-grid barber-home-stats-grid">
+                <div className="stat-card">
+                  <div className="stat-card-label">📅 Yeni Randevu</div>
+                  <div className="stat-card-value">{dashboardAppointmentStats.newRequests}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-card-label">✅ Onaylı Randevu</div>
+                  <div className="stat-card-value">{dashboardAppointmentStats.confirmed}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-card-label">⛔ Reddedilen Randevu</div>
+                  <div className="stat-card-value">{dashboardAppointmentStats.cancelled}</div>
+                </div>
+              </div>
+
+              <div className="barber-home-two-column">
+                <div className="barber-home-panel">
+                  <div className="barber-home-panel-head">
+                    <div>
+                      <h4 className="barber-home-panel-title">İşletme Durumu</h4>
+                      <p className="barber-home-panel-subtitle">Açık/kapalı günler ve temel operasyon metrikleri.</p>
+                    </div>
+                    <span className={`barber-home-panel-badge ${profileFieldsCompletion >= 80 ? 'success' : 'warning'}`}>
+                      {activeWorkingDays} Açık / {closedWorkingDays} Kapalı
+                    </span>
+                  </div>
+
+                  <div className="barber-home-alert-grid">
+                    {profileStatusCards.map((card) => (
+                      <div key={card.key} className={`barber-home-alert-card ${card.tone}`}>
+                        <div className="barber-home-alert-icon">{card.icon}</div>
+                        <div className="barber-home-alert-copy">
+                          <strong>{card.title}</strong>
+                          <span>{card.value}</span>
+                          <small>{card.description}</small>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="barber-home-panel">
+                  <div className="barber-home-panel-head">
+                    <div>
+                      <h4 className="barber-home-panel-title">Business Uyarıları</h4>
+                      <p className="barber-home-panel-subtitle">Satış ve operasyonu etkileyen eksikleri görün.</p>
+                    </div>
+                    <span className="barber-home-panel-badge info">{businessAlerts.length} uyarı</span>
+                  </div>
+
+                  {businessAlerts.length > 0 ? (
+                    <div className="barber-home-warning-list">
+                      {businessAlerts.map((alert) => (
+                        <div key={alert.key} className={`barber-home-warning-item ${alert.tone}`}>
+                          <span className="barber-home-warning-icon">{alert.icon}</span>
+                          <div className="barber-home-warning-copy">
+                            <strong>{alert.title}</strong>
+                            <p>{alert.text}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="barber-home-empty-state">
+                      Tüm temel işletme ayarlarınız tamam. Şimdi doluluk ve satış optimizasyonuna odaklanabilirsiniz.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="barber-home-two-column">
+                <div className="barber-home-panel">
+                  <div className="barber-home-panel-head">
+                    <div>
+                      <h4 className="barber-home-panel-title">Bugünün Operasyonu</h4>
+                      <p className="barber-home-panel-subtitle">Slot ve stok mantığında günlük akışı özetleyin.</p>
+                    </div>
+                  </div>
+
+                  <div className="barber-home-operation-grid">
+                    <div className="barber-home-operation-card">
+                      <span>Bugün ilk müsait saat</span>
+                      <strong>{dashboardAppointmentStats.available > 0 ? 'Mevcut' : 'Doldu'}</strong>
+                    </div>
+                    <div className="barber-home-operation-card">
+                      <span>İptal edilen slot</span>
+                      <strong>{dashboardAppointmentStats.cancelled}</strong>
+                    </div>
+                    <div className="barber-home-operation-card">
+                      <span>Çalışma günü</span>
+                      <strong>{activeWorkingDays}</strong>
+                    </div>
+                    <div className="barber-home-operation-card">
+                      <span>Onaylı ciro toplamı</span>
+                      <strong>₺{dashboardRevenueEstimate.toLocaleString('tr-TR')}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="barber-home-panel">
+                  <div className="barber-home-panel-head">
+                    <div>
+                      <h4 className="barber-home-panel-title">Son Aktivite</h4>
+                      <p className="barber-home-panel-subtitle">Bugün seçilen tarih için slot durumu.</p>
+                    </div>
+                  </div>
+
+                  {dashboardSlots.length > 0 ? (
+                    <div className="barber-home-activity-list">
+                      {dashboardSlots.slice(0, 6).map((slot) => (
+                        <div key={slot._id} className="barber-home-activity-item">
+                          <div>
+                            <strong>{slot.time}</strong>
+                            <p>{slot.customerName || slot.customer?.name || 'Müsait slot'}</p>
+                          </div>
+                          <span className={`badge ${slot.status === 'confirmed' ? 'bg-success' : slot.status === 'available' ? 'bg-secondary' : 'bg-danger'}`}>
+                            {slot.status === 'confirmed' ? 'Onaylı' : slot.status === 'available' ? 'Müsait' : 'İptal'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="barber-home-empty-state">
+                      Bugün için veri yok. Takvim bölümünden slotları kontrol edebilirsiniz.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="info-card mt-4">
+                <div className="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                  <div>
+                    <h4 className="mb-1">Üyelik Bilgileri</h4>
+                    <p className="mb-0 text-muted">Plan ve yenileme tarihini takip edin.</p>
+                  </div>
+                  <span className="badge bg-primary">{barber.subscription?.plan?.toUpperCase()}</span>
+                </div>
+                <div className="mt-3 d-flex flex-wrap gap-3">
+                  <div><strong>Plan:</strong> {barber.subscription?.plan}</div>
+                  <div><strong>Bitiş Tarihi:</strong> {new Date(barber.subscription?.expiresAt).toLocaleDateString('tr-TR')}</div>
+                </div>
               </div>
             </div>
           )}
@@ -375,7 +762,7 @@ function BarberHome() {
                     <div className="barber-calendar-title">Takvim Tablo</div>
                     <div className="barber-calendar-subtitle">Randevularınızı görmek için tarih seçin</div>
                   </div>
-                  <div className="barber-calendar-pill">14 Gün</div>
+                  <div className="barber-calendar-pill">5 Gün</div>
                 </div>
                 <div className="barber-calendar-grid">
                   {calendarDays.map((day) => {
@@ -409,24 +796,78 @@ function BarberHome() {
               </div>
 
               {mySlots.length > 0 ? (
-                <div className="info-card">
-                  <h4 className="mb-3">Seçilen Tarih: {new Date(slotDate).toLocaleDateString('tr-TR')}</h4>
-                  <div className="list-group">
+                <div className="barber-calendar-slots">
+                  <div className="barber-calendar-slots-header">
+                    <h4 className="mb-0">Seçilen Tarih: {new Date(`${slotDate}T00:00:00`).toLocaleDateString('tr-TR')}</h4>
+                  </div>
+                  <div className="barber-slots-grid">
                     {mySlots.map(s => (
-                      <div key={s._id} className="list-group-item d-flex justify-content-between align-items-center">
-                        <div>
-                          <strong>{s.time}</strong> -
-                          <span className={`badge ms-2 ${s.status === 'confirmed' ? 'bg-success' : s.status === 'available' ? 'bg-secondary' : 'bg-danger'}`}>
-                            {s.status === 'confirmed' ? 'Randevu Alındı' : s.status === 'available' ? 'Müsait' : 'İptal'}
-                          </span>
-                          {(s.customerName || s.customer?.name) && <span className="ms-2">({s.customerName || s.customer?.name})</span>}
+                      <div key={s._id} className={`barber-slot-card barber-slot-${s.status}`}>
+                        <div className="barber-slot-time">
+                          <div className="barber-slot-time-value">{s.time}</div>
+                          <div className="barber-slot-time-label">Saat</div>
+                        </div>
+                        <div className="barber-slot-info">
+                          <div className="barber-slot-status">
+                            <span className={`badge ${s.status === 'confirmed' ? 'bg-success' : s.status === 'available' ? 'bg-secondary' : s.status === 'booked' ? 'bg-info' : 'bg-danger'}`}>
+                              {s.status === 'confirmed' ? '✓ Onaylı' : s.status === 'available' ? '◯ Müsait' : s.status === 'booked' ? '◇ Yeni' : '✗ Kapalı'}
+                            </span>
+                          </div>
+                          {(s.customerName || s.customer?.name) && (
+                            <div className="barber-slot-customer">
+                              {s.customerName || s.customer?.name}
+                            </div>
+                          )}
+                          {s.service?.name && (
+                            <div className="barber-slot-service">
+                              {s.service.name}
+                            </div>
+                          )}
+                        </div>
+                        <div className="barber-slot-actions">
+                          {s.status === 'available' && (
+                            <button title="Randevu Ekle" className="barber-slot-action-btn" onClick={() => {
+                              setSelectedSlotForManual(s);
+                              setShowCreateManualSlot(true);
+                            }}>
+                              ➕
+                            </button>
+                          )}
+                          {s.status !== 'available' && (
+                            <button title="Düzenle" className="barber-slot-action-btn" onClick={() => {
+                              setSelectedSlotForEdit(s);
+                              setShowEditSlot(true);
+                            }}>
+                              ✏️
+                            </button>
+                          )}
+                          <button title="Bloke Et" className="barber-slot-action-btn barber-slot-action-block" onClick={() => {
+                            if (window.confirm('Bu saati bloke etmek istediğinden emin misin?')) {
+                              api.patch(`/slots/${s._id}/action`, { action: 'block' }).then(() => {
+                                loadSlotsForDate(slotDate);
+                              });
+                            }
+                          }}>
+                            🚫
+                          </button>
+                          <button title="Sil" className="barber-slot-action-btn barber-slot-action-delete" onClick={() => {
+                            if (window.confirm('Bu saati silmek istediğinden emin misin?')) {
+                              api.delete(`/slots/${s._id}`).then(() => {
+                                loadSlotsForDate(slotDate);
+                              }).catch(err => console.error('Delete error:', err));
+                            }
+                          }}>
+                            🗑️
+                          </button>
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
               ) : (
-                <div className="text-muted text-center py-5">Bu tarihte randevu yok</div>
+                <div className="barber-calendar-empty">
+                  <div className="barber-calendar-empty-title">Bu tarihte randevu yok</div>
+                </div>
               )}
             </div>
           )}
@@ -459,10 +900,19 @@ function BarberHome() {
             </div>
           )}
 
+          {/* Profile Section */}
+          {activeSection === 'profile' && (
+            <div>
+              <h1 className="page-title">Profil Bilgilerim</h1>
+              <p className="page-subtitle">Berber adı, iletişim ve şifre güncelleme alanı</p>
+              <BarberProfile />
+            </div>
+          )}
+
           {/* Settings Section */}
           {activeSection === 'settings' && (
             <div>
-              <h1 className="page-title">Ayarlar</h1>
+              <h1 className="page-title">Mağaza Ayarları</h1>
               <p className="page-subtitle">Profil ve işletme ayarlarınızı yönetin</p>
               <ShopSettings />
             </div>
@@ -471,23 +921,6 @@ function BarberHome() {
       </main>
 
       {/* Messages - Toast Notifications */}
-      {serviceMessage.text && (
-        <div
-          style={{
-            position: 'fixed',
-            top: '20px',
-            right: '20px',
-            backgroundColor: serviceMessage.type === 'success' ? '#27ae60' : '#e74c3c',
-            color: 'white',
-            padding: '1rem',
-            borderRadius: '0.8rem',
-            zIndex: 1050,
-            maxWidth: '400px',
-          }}
-        >
-          {serviceMessage.text}
-        </div>
-      )}
       {actionMessage.text && (
         <div
           style={{
@@ -505,6 +938,36 @@ function BarberHome() {
           {actionMessage.text}
         </div>
       )}
+
+      {/* Modals */}
+      <CreateManualSlotModal
+        show={showCreateManualSlot}
+        slot={selectedSlotForManual}
+        services={services}
+        onClose={() => {
+          setShowCreateManualSlot(false);
+          setSelectedSlotForManual(null);
+        }}
+        onSuccess={() => {
+          loadSlotsForDate(slotDate);
+          setShowCreateManualSlot(false);
+          setSelectedSlotForManual(null);
+        }}
+      />
+      <EditSlotModal
+        show={showEditSlot}
+        slot={selectedSlotForEdit}
+        services={services}
+        onClose={() => {
+          setShowEditSlot(false);
+          setSelectedSlotForEdit(null);
+        }}
+        onSuccess={() => {
+          loadSlotsForDate(slotDate);
+          setShowEditSlot(false);
+          setSelectedSlotForEdit(null);
+        }}
+      />
     </div>
   );
 }

@@ -5,7 +5,7 @@ const BarberSchema = new mongoose.Schema({
   salonName: { type: String, required: true },
   name: { type: String, required: true },
   phone: { type: String, required: true, unique: true },
-  email: { type: String, required: true, unique: true },
+  email: { type: String, trim: true, lowercase: true, unique: true, sparse: true },
   address: { type: String, required: true },
   city: { type: String, required: true },
   district: { type: String, required: true },

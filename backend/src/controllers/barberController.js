@@ -19,9 +19,14 @@ function barberDefaultsWorkingHours() {
 exports.register = async (req, res) => {
   try {
     const { barberType, salonName, fullName, phone, email, address, city, district, subscriptionPlan, password, services, features, workingHours } = req.body;
+    const normalizedEmail = String(email || '').trim().toLowerCase();
 
-    if (!barberType || !salonName || !fullName || !phone || !email || !address || !city || !district || !password) {
+    if (!barberType || !salonName || !fullName || !phone || !address || !city || !district || !password) {
       return res.status(400).json({ error: 'Tüm alanlar zorunludur' });
+    }
+
+    if (normalizedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return res.status(400).json({ error: 'Geçerli bir e-posta giriniz' });
     }
 
     const existingBarber = await Barber.findOne({ phone });
@@ -29,9 +34,11 @@ exports.register = async (req, res) => {
       return res.status(400).json({ error: 'Bu telefon numarası zaten kayıtlı' });
     }
 
-    const existingBarberEmail = await Barber.findOne({ email });
-    if (existingBarberEmail) {
-      return res.status(400).json({ error: 'Bu e-posta adresi zaten kayıtlı' });
+    if (normalizedEmail) {
+      const existingBarberEmail = await Barber.findOne({ email: normalizedEmail });
+      if (existingBarberEmail) {
+        return res.status(400).json({ error: 'Bu e-posta adresi zaten kayıtlı' });
+      }
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -41,7 +48,7 @@ exports.register = async (req, res) => {
       salonName,
       name: fullName,
       phone,
-      email,
+      email: normalizedEmail || undefined,
       address,
       city,
       district,
@@ -220,10 +227,42 @@ exports.updateProfile = async (req, res) => {
   try {
     const barberId = req.barberId;
     const updates = { ...req.body };
+    const incomingEmail = Object.prototype.hasOwnProperty.call(updates, 'email')
+      ? String(updates.email || '').trim().toLowerCase()
+      : undefined;
 
     // Telefon değiştirilemez
     if (updates.phone) {
       delete updates.phone;
+    }
+
+    const barber = await Barber.findById(barberId);
+    if (!barber) {
+      return res.status(404).json({ error: 'Berber bulunamadı' });
+    }
+
+    // E-posta sadece boşken bir kez kaydedilebilir; kaydedildikten sonra değiştirilemez.
+    if (incomingEmail !== undefined) {
+      const currentEmail = String(barber.email || '').trim().toLowerCase();
+
+      if (currentEmail) {
+        if (incomingEmail !== currentEmail) {
+          return res.status(400).json({ error: 'E-posta bir kez kaydedildikten sonra değiştirilemez' });
+        }
+      } else if (incomingEmail) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(incomingEmail)) {
+          return res.status(400).json({ error: 'Geçerli bir e-posta giriniz' });
+        }
+
+        const exists = await Barber.findOne({ email: incomingEmail, _id: { $ne: barberId } });
+        if (exists) {
+          return res.status(400).json({ error: 'Bu e-posta adresi zaten kayıtlı' });
+        }
+
+        updates.email = incomingEmail;
+      } else {
+        delete updates.email;
+      }
     }
 
     // abonelik planı tek field olarak geliyor, nested kaydet
@@ -237,15 +276,18 @@ exports.updateProfile = async (req, res) => {
     const hasWorkingHoursUpdate = !!updates.workingHours;
     const hasCalendarFeatureUpdate = updates.features && updates.features.calendarBooking !== undefined;
 
-    // abonelik vs dışında herhangi bir field olabilir
-    const barber = await Barber.findByIdAndUpdate(barberId, updates, { new: true }).select('-password');
+    const updatedBarber = await Barber.findByIdAndUpdate(
+      barberId,
+      updates,
+      { new: true, runValidators: true }
+    ).select('-password');
 
-    if (!barber) {
+    if (!updatedBarber) {
       return res.status(404).json({ error: 'Berber bulunamadı' });
     }
 
     // Eğer çalışma saatleri veya calendar feature güncellenirse otomatik slot oluştur
-    if ((hasWorkingHoursUpdate || hasCalendarFeatureUpdate) && barber.features?.calendarBooking) {
+    if ((hasWorkingHoursUpdate || hasCalendarFeatureUpdate) && updatedBarber.features?.calendarBooking) {
       const startDate = moment().format('YYYY-MM-DD');
       const endDate = moment().add(60, 'days').format('YYYY-MM-DD');
       
@@ -255,7 +297,7 @@ exports.updateProfile = async (req, res) => {
       });
     }
 
-    res.json({ success: true, data: barber });
+    res.json({ success: true, data: updatedBarber });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -280,11 +322,13 @@ exports.addService = async (req, res) => {
     if (!name || price == null) {
       return res.status(400).json({ error: 'Hizmet adı ve fiyat gerekli' });
     }
-    const barber = await Barber.findById(barberId);
-    if (!barber) return res.status(404).json({ error: 'Berber bulunamadı' });
     const svc = { name, price, duration: duration || 0 };
-    barber.services.push(svc);
-    await barber.save();
+    const barber = await Barber.findByIdAndUpdate(
+      barberId,
+      { $push: { services: svc } },
+      { new: true }
+    );
+    if (!barber) return res.status(404).json({ error: 'Berber bulunamadı' });
     res.json({ success: true, service: barber.services[barber.services.length - 1] });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -355,8 +399,8 @@ exports.changePassword = async (req, res) => {
       return res.status(400).json({ error: 'Yeni şifre en az 8 karakter olmalıdır' });
     }
 
-    barber.password = await bcrypt.hash(newPassword, 10);
-    await barber.save();
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await Barber.updateOne({ _id: barberId }, { $set: { password: hashedPassword } });
 
     res.json({ success: true, message: 'Şifre başarıyla değiştirildi' });
   } catch (error) {

@@ -42,8 +42,7 @@ function BarberRegister() {
     if (!salonName.trim()) newErrors.salonName = 'Salon adı gerekli';
     if (!fullName.trim()) newErrors.fullName = 'Ad Soyad gerekli';
     if (!phone.trim()) newErrors.phone = 'Telefon numarası gerekli';
-    if (!email.trim()) newErrors.email = 'E-posta gerekli';
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) newErrors.email = 'Geçerli e-posta giriniz';
+    if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) newErrors.email = 'Geçerli e-posta giriniz';
     if (!address.trim()) newErrors.address = 'Adres gerekli';
     if (!city) newErrors.city = 'Şehir seçiniz';
     if (!district) newErrors.district = 'İlçe seçiniz';
@@ -110,6 +109,7 @@ function BarberRegister() {
             <div className="mb-3">
               <label className="form-label fw-semibold">E-posta</label>
               <input type="email" className={`form-control form-control-lg ${errors.email ? 'is-invalid' : ''}`} placeholder="ornek@email.com" value={email} onChange={(e) => { setEmail(e.target.value); if (errors.email) setErrors({ ...errors, email: '' }); }} />
+              <small className="text-muted">Opsiyonel: İsterseniz şimdi boş bırakıp profilden daha sonra ekleyebilirsiniz.</small>
               {errors.email && <div className="invalid-feedback d-block"><small>⚠️ {errors.email}</small></div>}
             </div>
             <div className="mb-3">

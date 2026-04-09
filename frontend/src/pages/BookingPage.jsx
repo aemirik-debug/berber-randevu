@@ -5,6 +5,13 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 import './BookingPage.css';
 import barberLogoSample from '../assets/barber-logo-sample.svg';
 
+const toLocalDateInput = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 function BookingPage({ embedded = false, onBack, onSuccess }) {
   const [city, setCity] = useState('');
   const [district, setDistrict] = useState('');
@@ -25,7 +32,7 @@ function BookingPage({ embedded = false, onBack, onSuccess }) {
   const [mobileStep, setMobileStep] = useState(1);
 
   const navigate = useNavigate();
-  const today = new Date().toISOString().split('T')[0];
+  const today = toLocalDateInput(new Date());
   
 useEffect(() => {
   const loadCities = async () => {
@@ -101,7 +108,8 @@ const loadBarbers = async () => {
           customerId: customerInfo._id,
           customerPhone: customerInfo.phone,
           customerName: `${customerInfo.name || ''} ${customerInfo.surname || ''}`.trim(),
-          service: selectedService?.name
+          service: selectedService?.name,
+          price: selectedPrice
         });
 
         setPaymentStatus('success');
@@ -133,7 +141,7 @@ const loadBarbers = async () => {
       currentDate.setDate(startDate.getDate() + index);
 
       return {
-        value: currentDate.toISOString().split('T')[0],
+        value: toLocalDateInput(currentDate),
         dayName: new Intl.DateTimeFormat('tr-TR', { weekday: 'short' }).format(currentDate),
         monthName: new Intl.DateTimeFormat('tr-TR', { month: 'short' }).format(currentDate),
         dayNumber: new Intl.DateTimeFormat('tr-TR', { day: '2-digit' }).format(currentDate),
