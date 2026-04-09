@@ -211,6 +211,86 @@ router.patch('/:slotId/action', auth, checkFeature('calendarBooking'), async (re
   }
 });
 
+// Berber yeni gelen randevunun tarih/saatini düzenleyip müşteriye bildirir
+router.patch('/:slotId/reschedule', auth, checkFeature('calendarBooking'), async (req, res) => {
+  try {
+    const { newDate, newTime } = req.body;
+
+    if (!newTime || !/^([01]\d|2[0-3]):([0-5]\d)$/.test(String(newTime))) {
+      return res.status(400).json({ success: false, error: 'Geçerli bir saat giriniz (HH:mm)' });
+    }
+
+    const slot = await Slot.findOne({ _id: req.params.slotId, barber: req.barberId });
+    if (!slot) {
+      return res.status(404).json({ success: false, error: 'Randevu bulunamadı' });
+    }
+
+    if (!['booked', 'confirmed'].includes(String(slot.status || '').toLowerCase())) {
+      return res.status(400).json({ success: false, error: 'Sadece bekleyen veya onaylı randevular düzenlenebilir' });
+    }
+
+    const targetDate = String(newDate || slot.date || '').trim();
+    const targetTime = String(newTime || '').trim();
+    const oldDate = slot.date;
+    const oldTime = slot.time;
+
+    const clashSlot = await Slot.findOne({
+      barber: req.barberId,
+      date: targetDate,
+      time: targetTime,
+      _id: { $ne: slot._id }
+    });
+
+    if (clashSlot) {
+      return res.status(400).json({ success: false, error: 'Bu saatte başka bir randevu/slot mevcut' });
+    }
+
+    slot.date = targetDate;
+    slot.time = targetTime;
+    await slot.save();
+
+    if (slot.customer?.customerId) {
+      const Customer = require('../models/Customer');
+      await Customer.updateOne(
+        { _id: slot.customer.customerId, 'appointments.slotId': String(slot._id) },
+        {
+          $set: {
+            'appointments.$.date': slot.date,
+            'appointments.$.time': slot.time,
+          }
+        }
+      );
+    }
+
+    const io = req.app.get('io');
+    const connectedCustomers = req.app.get('connectedCustomers');
+    const customerId = slot.customer?.customerId ? String(slot.customer.customerId) : null;
+    const socketId = customerId && connectedCustomers ? connectedCustomers.get(customerId) : null;
+
+    if (socketId && io) {
+      io.to(socketId).emit('appointment_update', {
+        slotId: String(slot._id),
+        status: slot.status,
+        date: slot.date,
+        time: slot.time,
+        oldDate,
+        oldTime,
+        message: 'Randevu saatiniz berber tarafından güncellendi.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Randevu saati güncellendi',
+      notified: Boolean(socketId),
+      slot
+    });
+  } catch (error) {
+    console.error('❌ Reschedule hatası:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Berberin tüm slotlarını getir (Berber için)
 router.get('/my-slots', auth, checkFeature('calendarBooking'), async (req, res) => {
   try {

@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import BarberProfile from './BarberProfile';
 import ShopSettings from './ShopSettings';
-import SlotDetailsModal from '../components/SlotDetailsModal';
 import CreateManualSlotModal from '../components/CreateManualSlotModal';
 import EditSlotModal from '../components/EditSlotModal';
 import api from '../services/api';
@@ -32,14 +31,15 @@ function BarberHome() {
   const [mySlots, setMySlots] = useState([]);
   const [dashboardSlots, setDashboardSlots] = useState([]);
   const [slotDate, setSlotDate] = useState(toLocalDateInput(new Date()));
-  const [showSlotDetails, setShowSlotDetails] = useState(false);
-  const [slotDetailsData, setSlotDetailsData] = useState(null);
   const [showCreateManualSlot, setShowCreateManualSlot] = useState(false);
   const [selectedSlotForManual, setSelectedSlotForManual] = useState(null);
   const [showEditSlot, setShowEditSlot] = useState(false);
   const [selectedSlotForEdit, setSelectedSlotForEdit] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [slotsError, setSlotsError] = useState('');
+  const [pendingSlotActionId, setPendingSlotActionId] = useState('');
+  const [editingAlertSlotId, setEditingAlertSlotId] = useState('');
+  const [alertRescheduleDrafts, setAlertRescheduleDrafts] = useState({});
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const todayIso = useMemo(() => toLocalDateInput(new Date()), []);
@@ -53,6 +53,16 @@ function BarberHome() {
     { key: 'stats', label: 'İstatistikler', icon: '📊' },
     { key: 'settings', label: 'Mağaza Ayarları', icon: '⚙️' },
   ];
+
+  const loadDashboardSlotsForToday = async () => {
+    try {
+      const slotsRes = await api.get('/slots/my-slots', { params: { date: todayIso } });
+      setDashboardSlots(slotsRes.data.data || []);
+    } catch (slotErr) {
+      console.error('Bugünün slotları yüklenemedi', slotErr);
+      setDashboardSlots([]);
+    }
+  };
 
   // Message cleanup
   useEffect(() => {
@@ -101,13 +111,7 @@ function BarberHome() {
         setBarber(profRes.data);
         setServices(svcRes.data.services || []);
 
-        try {
-          const slotsRes = await api.get('/slots/my-slots', { params: { date: todayIso } });
-          setDashboardSlots(slotsRes.data.data || []);
-        } catch (slotErr) {
-          console.error('Bugünün slotları yüklenemedi', slotErr);
-          setDashboardSlots([]);
-        }
+        await loadDashboardSlotsForToday();
       } catch (err) {
         console.error('Veri yükleme hatası', err);
         if (err.response?.status === 401) {
@@ -152,12 +156,7 @@ function BarberHome() {
     }
 
     const loadHomeSlots = async () => {
-      try {
-        const res = await api.get('/slots/my-slots', { params: { date: todayIso } });
-        setDashboardSlots(res.data.data || []);
-      } catch (err) {
-        console.error('Ana sayfa slot tazeleme hatası', err);
-      }
+      await loadDashboardSlotsForToday();
     };
 
     loadHomeSlots();
@@ -251,6 +250,11 @@ function BarberHome() {
       return sum + slotRevenue;
     }, 0);
   }, [dashboardSlots]);
+  const dashboardBookedSlots = useMemo(() => {
+    return dashboardSlots
+      .filter((slot) => String(slot.status || '').toLowerCase() === 'booked')
+      .sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+  }, [dashboardSlots]);
   const profileStatusCards = useMemo(() => {
     const emailFilled = String(barber?.email || '').trim();
     return [
@@ -330,6 +334,89 @@ function BarberHome() {
       setMySlots([]);
     } finally {
       setLoadingSlots(false);
+    }
+  };
+
+  const handleApproveFromAlerts = async (slot) => {
+    try {
+      setPendingSlotActionId(slot._id);
+      const customerId = slot?.customer?.customerId || null;
+      await api.patch(`/slots/${slot._id}/action`, {
+        action: 'confirm',
+        customerId,
+      });
+      await loadDashboardSlotsForToday();
+      if (activeSection === 'calendar' && slotDate === todayIso) {
+        await loadSlotsForDate(slotDate);
+      }
+      setActionMessage({ text: 'Randevu onaylandı ve müşteriye bildirildi.', type: 'success' });
+    } catch (err) {
+      setActionMessage({ text: err.response?.data?.error || 'Randevu onaylanamadı', type: 'error' });
+    } finally {
+      setPendingSlotActionId('');
+    }
+  };
+
+  const handleCancelFromAlerts = async (slot) => {
+    const reason = window.prompt('İptal sebebini yazın:', 'Berber tarafından iptal edildi');
+    if (!reason) {
+      return;
+    }
+
+    try {
+      setPendingSlotActionId(slot._id);
+      const customerId = slot?.customer?.customerId || null;
+      await api.patch(`/slots/${slot._id}/action`, {
+        action: 'cancel',
+        reason,
+        customerId,
+      });
+      await loadDashboardSlotsForToday();
+      if (activeSection === 'calendar' && slotDate === todayIso) {
+        await loadSlotsForDate(slotDate);
+      }
+      setActionMessage({ text: 'Randevu iptal edildi ve müşteriye bildirildi.', type: 'success' });
+    } catch (err) {
+      setActionMessage({ text: err.response?.data?.error || 'Randevu iptal edilemedi', type: 'error' });
+    } finally {
+      setPendingSlotActionId('');
+    }
+  };
+
+  const startRescheduleFromAlerts = (slot) => {
+    setEditingAlertSlotId(slot._id);
+    setAlertRescheduleDrafts((prev) => ({
+      ...prev,
+      [slot._id]: {
+        date: slot.date || todayIso,
+        time: slot.time || '09:00',
+      },
+    }));
+  };
+
+  const handleRescheduleFromAlerts = async (slot) => {
+    const draft = alertRescheduleDrafts[slot._id];
+    if (!draft?.time) {
+      setActionMessage({ text: 'Yeni saat seçmelisiniz', type: 'error' });
+      return;
+    }
+
+    try {
+      setPendingSlotActionId(slot._id);
+      await api.patch(`/slots/${slot._id}/reschedule`, {
+        newDate: draft.date || slot.date,
+        newTime: draft.time,
+      });
+      setEditingAlertSlotId('');
+      await loadDashboardSlotsForToday();
+      if (activeSection === 'calendar' && slotDate === (draft.date || todayIso)) {
+        await loadSlotsForDate(slotDate);
+      }
+      setActionMessage({ text: 'Randevu saati güncellendi ve müşteriye bildirim gönderildi.', type: 'success' });
+    } catch (err) {
+      setActionMessage({ text: err.response?.data?.error || 'Randevu saati güncellenemedi', type: 'error' });
+    } finally {
+      setPendingSlotActionId('');
     }
   };
 
@@ -515,6 +602,109 @@ function BarberHome() {
                     </span>
                   </button>
                 ))}
+              </div>
+
+              <div className="barber-home-panel barber-home-alert-queue-panel">
+                <div className="barber-home-panel-head">
+                  <div>
+                    <h4 className="barber-home-panel-title">Uyarılar</h4>
+                    <p className="barber-home-panel-subtitle">Yeni gelen randevular burada görünür. Onaylayabilir, iptal edebilir veya saati güncelleyebilirsiniz.</p>
+                  </div>
+                  <span className="barber-home-panel-badge info">{dashboardBookedSlots.length} yeni randevu</span>
+                </div>
+
+                {dashboardBookedSlots.length > 0 ? (
+                  <div className="barber-home-alert-queue-list">
+                    {dashboardBookedSlots.map((slot) => {
+                      const isSaving = pendingSlotActionId === slot._id;
+                      const isEditing = editingAlertSlotId === slot._id;
+                      const draft = alertRescheduleDrafts[slot._id] || { date: slot.date, time: slot.time };
+
+                      return (
+                        <div key={slot._id} className="barber-home-alert-queue-item">
+                          <div className="barber-home-alert-queue-meta">
+                            <div className="barber-home-alert-queue-title">{slot.customerName || slot.customer?.name || 'İsimsiz Müşteri'}</div>
+                            <div className="barber-home-alert-queue-subtitle">
+                              {slot.date} • {slot.time} • {slot.service?.name || slot.customer?.service || 'Hizmet seçilmedi'}
+                            </div>
+                          </div>
+
+                          {isEditing ? (
+                            <div className="barber-home-alert-queue-editor">
+                              <input
+                                type="date"
+                                className="form-control form-control-sm"
+                                value={draft.date || todayIso}
+                                onChange={(e) => setAlertRescheduleDrafts((prev) => ({
+                                  ...prev,
+                                  [slot._id]: { ...draft, date: e.target.value },
+                                }))}
+                                disabled={isSaving}
+                              />
+                              <input
+                                type="time"
+                                className="form-control form-control-sm"
+                                value={draft.time || ''}
+                                onChange={(e) => setAlertRescheduleDrafts((prev) => ({
+                                  ...prev,
+                                  [slot._id]: { ...draft, time: e.target.value },
+                                }))}
+                                disabled={isSaving}
+                              />
+                              <div className="barber-home-alert-queue-actions compact">
+                                <button
+                                  type="button"
+                                  className="btn btn-primary btn-sm"
+                                  onClick={() => handleRescheduleFromAlerts(slot)}
+                                  disabled={isSaving}
+                                >
+                                  Kaydet
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-outline-secondary btn-sm"
+                                  onClick={() => setEditingAlertSlotId('')}
+                                  disabled={isSaving}
+                                >
+                                  Vazgeç
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="barber-home-alert-queue-actions">
+                              <button
+                                type="button"
+                                className="btn btn-success btn-sm"
+                                onClick={() => handleApproveFromAlerts(slot)}
+                                disabled={isSaving}
+                              >
+                                Onayla
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-warning btn-sm"
+                                onClick={() => startRescheduleFromAlerts(slot)}
+                                disabled={isSaving}
+                              >
+                                Saat Düzenle
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-danger btn-sm"
+                                onClick={() => handleCancelFromAlerts(slot)}
+                                disabled={isSaving}
+                              >
+                                İptal
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="barber-home-empty-state">Şu an bekleyen yeni randevu yok.</div>
+                )}
               </div>
 
               <div className="stat-grid barber-home-stats-grid">

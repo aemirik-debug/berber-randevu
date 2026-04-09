@@ -460,9 +460,18 @@ useEffect(() => {
     // status güncellemesi alındı
     console.log('🔔 Socket appointment_update alındı:', data);
     setAppointments(prev => prev.map(a => {
-      if (a.date === data.date && a.time === data.time) {
+      const sameSlot = String(a.slotId || '') && String(a.slotId || '') === String(data.slotId || '');
+      const sameOldDateTime = a.date === data.oldDate && a.time === data.oldTime;
+      const sameCurrentDateTime = a.date === data.date && a.time === data.time;
+
+      if (sameSlot || sameOldDateTime || sameCurrentDateTime) {
         console.log(`   ✅ Güncellenio: ${a.date} ${a.time} - Status: ${a.status} → ${data.status}`);
-        return { ...a, status: data.status };
+        return {
+          ...a,
+          status: data.status || a.status,
+          date: data.date || a.date,
+          time: data.time || a.time,
+        };
       }
       return a;
     }));
