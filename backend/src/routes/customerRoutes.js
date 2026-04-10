@@ -5,12 +5,47 @@ const Slot = require('../models/Slot');
 const jwt = require('jsonwebtoken');
 const authMiddleware = require('../middleware/authMiddleware');
 
+function isPastDateTime(dateStr, timeStr) {
+  const date = String(dateStr || '').trim();
+  const time = String(timeStr || '').trim().slice(0, 5);
+  if (!date || !time) {
+    return false;
+  }
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const todayIso = `${year}-${month}-${day}`;
+  const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  if (date < todayIso) {
+    return true;
+  }
+  if (date > todayIso) {
+    return false;
+  }
+
+  return time <= nowTime;
+}
+
 function ensureCustomerAccess(req, res) {
   if (req.user?.role !== 'customer' || req.customerId?.toString() !== req.params.id) {
     res.status(403).json({ message: 'Bu işlem için yetkiniz yok' });
     return false;
   }
   return true;
+}
+
+function normalizeCustomerStatusFromSlot(slotStatus) {
+  const statusLc = String(slotStatus || '').toLowerCase();
+  if (statusLc === 'confirmed') {
+    return 'confirmed';
+  }
+  if (statusLc === 'cancelled') {
+    return 'cancelled';
+  }
+  return 'Randevu Alındı';
 }
 
 // Kayıt
@@ -85,6 +120,10 @@ router.put('/update-password/:id', authMiddleware, async (req, res) => {
 
     if (!customer) {
       return res.status(404).json({ message: 'Müşteri bulunamadı' });
+    }
+
+    if (isPastDateTime(date, time)) {
+      return res.status(400).json({ message: 'Geçmiş saat için randevu oluşturulamaz' });
     }
 
     if (customer.password !== oldPassword) {
@@ -171,6 +210,7 @@ router.patch('/appointments/:id/:appointmentId/cancel', authMiddleware, async (r
     appointment.status = 'cancelled';
     appointment.cancelReason = 'Müşteri tarafından iptal edildi';
     appointment.reminderSentAt = null;
+    appointment.rescheduleApproval = undefined;
     await customer.save();
 
     return res.json({
@@ -220,6 +260,10 @@ router.patch('/appointments/:id/:appointmentId/reschedule', authMiddleware, asyn
       return res.status(400).json({ message: 'Seçilen slot artık müsait değil' });
     }
 
+    if (isPastDateTime(targetSlot.date, targetSlot.time)) {
+      return res.status(400).json({ message: 'Geçmiş saat için randevu alınamaz' });
+    }
+
     const targetBarberId = targetSlot.barber?._id ? String(targetSlot.barber._id) : String(targetSlot.barber || '');
     if (String(appointment.barberId) !== targetBarberId) {
       return res.status(400).json({ message: 'Sadece aynı berberin slotlarına taşınabilir' });
@@ -263,11 +307,122 @@ router.patch('/appointments/:id/:appointmentId/reschedule', authMiddleware, asyn
     appointment.createdAt = new Date();
     appointment.reminderSentAt = null;
     appointment.cancelReason = '';
+    appointment.rescheduleApproval = undefined;
     await customer.save();
 
     return res.json({
       message: 'Randevu yeniden planlandı',
       appointment
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+// Berberin saat değişikliği önerisine müşteri yanıtı (PROTECTED)
+router.patch('/appointments/:id/:appointmentId/reschedule-response', authMiddleware, async (req, res) => {
+  try {
+    if (!ensureCustomerAccess(req, res)) return;
+
+    const decision = String(req.body?.decision || '').toLowerCase();
+    if (!['accept', 'reject'].includes(decision)) {
+      return res.status(400).json({ message: 'Geçersiz karar' });
+    }
+
+    const customer = await Customer.findById(req.params.id);
+    if (!customer) {
+      return res.status(404).json({ message: 'Müşteri bulunamadı' });
+    }
+
+    const appointment = customer.appointments.id(req.params.appointmentId);
+    if (!appointment) {
+      return res.status(404).json({ message: 'Randevu bulunamadı' });
+    }
+
+    const phase = String(appointment?.rescheduleApproval?.phase || '');
+    if (phase !== 'awaiting_customer') {
+      return res.status(400).json({ message: 'Bu randevu için müşteri onayı beklenmiyor' });
+    }
+
+    if (!appointment.slotId) {
+      return res.status(400).json({ message: 'Randevu slot bilgisi eksik' });
+    }
+
+    const slot = await Slot.findById(appointment.slotId);
+    if (!slot) {
+      return res.status(404).json({ message: 'Slot bulunamadı' });
+    }
+
+    if (String(slot.status || '').toLowerCase() !== 'reschedule_pending_customer') {
+      return res.status(400).json({ message: 'Slot müşteri onayı adımında değil' });
+    }
+
+    const approval = slot.rescheduleApproval || {};
+    const previousStatus = String(approval.previousStatus || 'booked').toLowerCase();
+    const fallbackStatus = previousStatus === 'confirmed' ? 'confirmed' : 'booked';
+
+    if (decision === 'accept') {
+      slot.status = 'reschedule_pending_barber';
+      slot.rescheduleApproval = {
+        ...approval,
+        phase: 'awaiting_barber',
+        customerDecision: 'accepted',
+        customerRespondedAt: new Date(),
+      };
+
+      appointment.status = 'Saat Değişikliği Berber Onayı Bekleniyor';
+      appointment.rescheduleApproval = {
+        ...(appointment.rescheduleApproval || {}),
+        phase: 'awaiting_barber',
+        customerDecision: 'accepted',
+        customerRespondedAt: new Date(),
+      };
+    } else {
+      slot.status = fallbackStatus;
+      slot.rescheduleApproval = {
+        ...approval,
+        phase: 'rejected_by_customer',
+        customerDecision: 'rejected',
+        customerRespondedAt: new Date(),
+      };
+
+      appointment.status = normalizeCustomerStatusFromSlot(slot.status);
+      appointment.rescheduleApproval = {
+        ...(appointment.rescheduleApproval || {}),
+        phase: 'rejected_by_customer',
+        customerDecision: 'rejected',
+        customerRespondedAt: new Date(),
+      };
+      appointment.date = approval.oldDate || appointment.date;
+      appointment.time = approval.oldTime || appointment.time;
+    }
+
+    await slot.save();
+    await customer.save();
+
+    const io = req.app.get('io');
+    const connectedBarbers = req.app.get('connectedBarbers');
+    const barberId = appointment.barberId || (slot.barber ? String(slot.barber) : '');
+    const barberSocketId = barberId && connectedBarbers ? connectedBarbers.get(String(barberId)) : null;
+
+    if (barberSocketId && io) {
+      io.to(barberSocketId).emit('barber_reschedule_response', {
+        slotId: String(slot._id),
+        appointmentId: String(appointment._id),
+        customerDecision: decision,
+        status: slot.status,
+        rescheduleApproval: slot.rescheduleApproval || null,
+        message: decision === 'accept'
+          ? 'Müşteri yeni saat önerisini kabul etti. Son onayınız bekleniyor.'
+          : 'Müşteri yeni saat önerisini reddetti. Önceki saat korundu.',
+      });
+    }
+
+    return res.json({
+      message: decision === 'accept'
+        ? 'Yeni saat önerisini kabul ettiniz, berber son onayı bekleniyor.'
+        : 'Yeni saat önerisini reddettiniz, önceki saat korundu.',
+      appointment,
     });
   } catch (err) {
     res.status(400).json({ message: err.message });

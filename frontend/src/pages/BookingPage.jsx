@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import api from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import 'bootstrap/dist/css/bootstrap.min.css';
@@ -30,9 +30,35 @@ function BookingPage({ embedded = false, onBack, onSuccess }) {
   const [paymentStatus, setPaymentStatus] = useState(null);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileStep, setMobileStep] = useState(1);
+  const [nowTick, setNowTick] = useState(Date.now());
 
   const navigate = useNavigate();
-  const today = toLocalDateInput(new Date());
+  const today = useMemo(() => toLocalDateInput(new Date(nowTick)), [nowTick]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowTick(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const nowTime = useMemo(() => {
+    const now = new Date(nowTick);
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  }, [nowTick]);
+
+  const isPastSlotForToday = useCallback((dateValue, timeValue) => {
+    const date = String(dateValue || '');
+    const time = String(timeValue || '').slice(0, 5);
+    if (!date || !time) {
+      return false;
+    }
+    if (date < today) {
+      return true;
+    }
+    if (date > today) {
+      return false;
+    }
+    return time <= nowTime;
+  }, [today, nowTime]);
   
 useEffect(() => {
   const loadCities = async () => {
@@ -130,7 +156,22 @@ const loadBarbers = async () => {
   };
 
   const selectedPrice = Number(selectedService?.price || 0);
-  const recommendedSlotId = availableSlots?.[0]?._id || '';
+  const visibleAvailableSlots = useMemo(() => {
+    if (!selectedDate) {
+      return [];
+    }
+    return (availableSlots || []).map((slot) => ({
+      ...slot,
+      isPastSlot: isPastSlotForToday(selectedDate, slot.time),
+    }));
+  }, [availableSlots, selectedDate, isPastSlotForToday]);
+
+  const selectableSlots = useMemo(
+    () => visibleAvailableSlots.filter((slot) => !slot.isPastSlot),
+    [visibleAvailableSlots]
+  );
+
+  const recommendedSlotId = selectableSlots?.[0]?._id || '';
   const serviceList = selectedBarber?.services || [];
   const calendarDays = useMemo(() => {
     const startDate = new Date();
@@ -160,7 +201,8 @@ const loadBarbers = async () => {
     if (dateValue) {
       try {
         const res = await api.get('/slots/available', { params: { barberId: selectedBarber._id, date: dateValue } });
-        setAvailableSlots(res.data.data);
+        const incomingSlots = Array.isArray(res.data.data) ? res.data.data : [];
+        setAvailableSlots(incomingSlots);
       } catch (err) {
         console.error('Slot yükleme hatası', err);
         if (err.response?.data?.instantOnly) {
@@ -179,6 +221,16 @@ const loadBarbers = async () => {
     if (!selectedService || !selectedDate || !selectedSlot) return 3;
     return 4;
   })();
+
+  useEffect(() => {
+    if (!selectedSlot || !selectedDate) {
+      return;
+    }
+
+    if (isPastSlotForToday(selectedDate, selectedSlot.time)) {
+      setSelectedSlot(null);
+    }
+  }, [selectedSlot, selectedDate, isPastSlotForToday]);
 
   const flowSteps = [
     { id: 1, label: 'Konum' },
@@ -477,22 +529,30 @@ const loadBarbers = async () => {
           </div>
 
           {/* Saat seçim */}
-          {selectedDate && availableSlots.length > 0 && (
+          {selectedDate && visibleAvailableSlots.length > 0 && (
             <div className="mb-3">
               <div className="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
                 <label className="form-label mb-0">Saat Seçin</label>
                 <span className="booking-time-note">En hızlı uygun saatler üstte listelenir.</span>
               </div>
               <div className="booking-time-grid">
-                {availableSlots.map(slot => (
+                {visibleAvailableSlots.map(slot => (
                   <button
                     key={slot._id}
                     type="button"
-                    className={`booking-time-chip ${selectedSlot === slot ? 'active' : ''}`}
-                    onClick={() => setSelectedSlot(slot)}
+                    className={`booking-time-chip ${selectedSlot === slot ? 'active' : ''} ${slot.isPastSlot ? 'disabled' : ''}`}
+                    onClick={() => {
+                      if (!slot.isPastSlot) {
+                        setSelectedSlot(slot);
+                      }
+                    }}
+                    disabled={slot.isPastSlot}
                   >
-                    {slot._id === recommendedSlotId && (
+                    {slot._id === recommendedSlotId && !slot.isPastSlot && (
                       <span className="booking-time-chip-badge">Önerilen</span>
+                    )}
+                    {slot.isPastSlot && (
+                      <span className="booking-time-chip-badge booking-time-chip-badge-muted">Geçti</span>
                     )}
                     {slot.time}
                   </button>
@@ -501,7 +561,7 @@ const loadBarbers = async () => {
             </div>
           )}
 
-          {selectedDate && availableSlots.length === 0 && (
+          {selectedDate && selectableSlots.length === 0 && (
             <div className="booking-empty-state mb-3">
               <div className="booking-empty-title">Bu gün için boş saat kalmadı</div>
               <div className="booking-empty-text">Lütfen farklı bir tarih seçin.</div>

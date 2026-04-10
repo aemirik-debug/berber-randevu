@@ -8,6 +8,35 @@ const moment = require('moment');
 // Moment.js'i English locale'e ayarla
 moment.locale('en');
 
+function getNowDateTimeParts() {
+  const now = new Date();
+  return {
+    todayIso: moment(now).format('YYYY-MM-DD'),
+    nowTime: moment(now).format('HH:mm')
+  };
+}
+
+function isPastDateTime(dateStr, timeStr) {
+  const date = String(dateStr || '').trim();
+  const time = String(timeStr || '').trim().slice(0, 5);
+
+  if (!date || !time) {
+    return false;
+  }
+
+  const { todayIso, nowTime } = getNowDateTimeParts();
+
+  if (date < todayIso) {
+    return true;
+  }
+
+  if (date > todayIso) {
+    return false;
+  }
+
+  return time <= nowTime;
+}
+
 async function pushAppointmentToCustomer({ customerId, customerPhone, appointment }) {
   const Customer = require('../models/Customer');
 
@@ -47,6 +76,17 @@ function buildCustomerAppointment(slot, extra = {}) {
     createdAt: extra.createdAt || new Date(),
     reminderSentAt: extra.reminderSentAt || null
   };
+}
+
+function toCustomerStatus(slotStatus) {
+  const statusLc = String(slotStatus || '').toLowerCase();
+  if (statusLc === 'confirmed') {
+    return 'confirmed';
+  }
+  if (statusLc === 'cancelled') {
+    return 'cancelled';
+  }
+  return 'Randevu Alındı';
 }
 
 // ===== TEST ENDPOINT - SLOT İSTATİSTİKLERİ =====
@@ -129,6 +169,9 @@ router.patch('/:slotId/action', auth, checkFeature('calendarBooking'), async (re
     }
 
     if (action === 'cancel') {
+      if (slot.isHistoricalRecord) {
+        return res.status(400).json({ success: false, error: 'Tarihi kayıtlar iptal akışına alınamaz' });
+      }
       slot.status = 'cancelled';
       slot.cancelReason = reason || '';
     } else if (action === 'confirm') {
@@ -234,6 +277,10 @@ router.patch('/:slotId/reschedule', auth, checkFeature('calendarBooking'), async
     const oldDate = slot.date;
     const oldTime = slot.time;
 
+    if (isPastDateTime(targetDate, targetTime)) {
+      return res.status(400).json({ success: false, error: 'Geçmiş saat için değişiklik yapılamaz' });
+    }
+
     const clashSlot = await Slot.findOne({
       barber: req.barberId,
       date: targetDate,
@@ -245,8 +292,23 @@ router.patch('/:slotId/reschedule', auth, checkFeature('calendarBooking'), async
       return res.status(400).json({ success: false, error: 'Bu saatte başka bir randevu/slot mevcut' });
     }
 
-    slot.date = targetDate;
-    slot.time = targetTime;
+    const previousStatus = String(slot.status || '').toLowerCase();
+
+    slot.status = 'reschedule_pending_customer';
+    slot.rescheduleApproval = {
+      phase: 'awaiting_customer',
+      previousStatus,
+      oldDate,
+      oldTime,
+      proposedDate: targetDate,
+      proposedTime: targetTime,
+      customerDecision: 'pending',
+      barberDecision: 'pending',
+      requestedBy: 'barber',
+      requestedAt: new Date(),
+      customerRespondedAt: null,
+      barberRespondedAt: null,
+    };
     await slot.save();
 
     if (slot.customer?.customerId) {
@@ -257,6 +319,19 @@ router.patch('/:slotId/reschedule', auth, checkFeature('calendarBooking'), async
           $set: {
             'appointments.$.date': slot.date,
             'appointments.$.time': slot.time,
+            'appointments.$.status': 'Saat Değişikliği Müşteri Onayı Bekleniyor',
+            'appointments.$.rescheduleApproval': {
+              phase: 'awaiting_customer',
+              oldDate,
+              oldTime,
+              proposedDate: targetDate,
+              proposedTime: targetTime,
+              customerDecision: 'pending',
+              barberDecision: 'pending',
+              requestedAt: new Date(),
+              customerRespondedAt: null,
+              barberRespondedAt: null,
+            },
           }
         }
       );
@@ -270,23 +345,133 @@ router.patch('/:slotId/reschedule', auth, checkFeature('calendarBooking'), async
     if (socketId && io) {
       io.to(socketId).emit('appointment_update', {
         slotId: String(slot._id),
-        status: slot.status,
-        date: slot.date,
-        time: slot.time,
+        status: 'Saat Değişikliği Müşteri Onayı Bekleniyor',
+        date: oldDate,
+        time: oldTime,
         oldDate,
         oldTime,
-        message: 'Randevu saatiniz berber tarafından güncellendi.'
+        message: 'Berber yeni saat önerdi. Lütfen onaylayın veya reddedin.',
+        rescheduleApproval: {
+          phase: 'awaiting_customer',
+          oldDate,
+          oldTime,
+          proposedDate: targetDate,
+          proposedTime: targetTime,
+          customerDecision: 'pending',
+          barberDecision: 'pending',
+        }
       });
     }
 
     return res.json({
       success: true,
-      message: 'Randevu saati güncellendi',
+      message: 'Yeni saat önerisi müşteriye gönderildi, müşteri onayı bekleniyor',
       notified: Boolean(socketId),
       slot
     });
   } catch (error) {
     console.error('❌ Reschedule hatası:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Müşteri kabulünden sonra son onay / red (berber)
+router.patch('/:slotId/reschedule/finalize', auth, checkFeature('calendarBooking'), async (req, res) => {
+  try {
+    const { decision } = req.body;
+    if (!['approve', 'reject'].includes(String(decision || '').toLowerCase())) {
+      return res.status(400).json({ success: false, error: 'Geçersiz karar' });
+    }
+
+    const slot = await Slot.findOne({ _id: req.params.slotId, barber: req.barberId });
+    if (!slot) {
+      return res.status(404).json({ success: false, error: 'Randevu bulunamadı' });
+    }
+
+    if (String(slot.status || '').toLowerCase() !== 'reschedule_pending_barber') {
+      return res.status(400).json({ success: false, error: 'Bu randevu için müşteri onayı sonrası final adımı beklenmiyor' });
+    }
+
+    if (String(slot.rescheduleApproval?.phase || '') !== 'awaiting_barber') {
+      return res.status(400).json({ success: false, error: 'Bu randevu final onay adımında değil' });
+    }
+
+    const previousStatus = String(slot.rescheduleApproval?.previousStatus || 'booked').toLowerCase();
+    const fallbackStatus = previousStatus === 'confirmed' ? 'confirmed' : 'booked';
+    const approval = slot.rescheduleApproval || {};
+
+    if (String(decision).toLowerCase() === 'approve') {
+      const proposedDate = approval.proposedDate || slot.date;
+      const proposedTime = approval.proposedTime || slot.time;
+      if (isPastDateTime(proposedDate, proposedTime)) {
+        return res.status(400).json({ success: false, error: 'Geçmiş saat için son onay verilemez' });
+      }
+
+      slot.date = approval.proposedDate || slot.date;
+      slot.time = approval.proposedTime || slot.time;
+      slot.status = fallbackStatus;
+      slot.rescheduleApproval = {
+        ...approval,
+        phase: 'completed',
+        barberDecision: 'approved',
+        barberRespondedAt: new Date(),
+      };
+    } else {
+      slot.status = fallbackStatus;
+      slot.rescheduleApproval = {
+        ...approval,
+        phase: 'rejected_by_barber',
+        barberDecision: 'rejected',
+        barberRespondedAt: new Date(),
+      };
+    }
+
+    await slot.save();
+
+    if (slot.customer?.customerId) {
+      const Customer = require('../models/Customer');
+      await Customer.updateOne(
+        { _id: slot.customer.customerId, 'appointments.slotId': String(slot._id) },
+        {
+          $set: {
+            'appointments.$.date': slot.date,
+            'appointments.$.time': slot.time,
+            'appointments.$.status': toCustomerStatus(slot.status),
+            'appointments.$.rescheduleApproval': {
+              ...(slot.rescheduleApproval || {}),
+            },
+          }
+        }
+      );
+    }
+
+    const io = req.app.get('io');
+    const connectedCustomers = req.app.get('connectedCustomers');
+    const customerId = slot.customer?.customerId ? String(slot.customer.customerId) : null;
+    const socketId = customerId && connectedCustomers ? connectedCustomers.get(customerId) : null;
+
+    if (socketId && io) {
+      io.to(socketId).emit('appointment_update', {
+        slotId: String(slot._id),
+        status: toCustomerStatus(slot.status),
+        date: slot.date,
+        time: slot.time,
+        message: String(decision).toLowerCase() === 'approve'
+          ? 'Saat değişikliği berber tarafından son onaylandı.'
+          : 'Saat değişikliği berber tarafından reddedildi, önceki saat korunuyor.',
+        rescheduleApproval: slot.rescheduleApproval || null,
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: String(decision).toLowerCase() === 'approve'
+        ? 'Saat değişikliği son onaylandı'
+        : 'Saat değişikliği reddedildi, önceki saat korundu',
+      slot,
+    });
+  } catch (error) {
+    console.error('❌ Reschedule finalize hatası:', error);
     return res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -337,6 +522,8 @@ router.get('/my-slots', auth, checkFeature('calendarBooking'), async (req, res) 
         date: slot.date, 
         time: slot.time, 
         status: slot.status, 
+        isHistoricalRecord: Boolean(slot.isHistoricalRecord),
+        rescheduleApproval: slot.rescheduleApproval || null,
         customerName: slot.customer?.name || null, 
         customerPhone: slot.customer?.phone || null,
         customer: slot.customer || null,
@@ -364,6 +551,10 @@ router.get('/my-slots', auth, checkFeature('calendarBooking'), async (req, res) 
 router.post('/', auth, checkFeature('calendarBooking'), async (req, res) => {
   try {
     const { date, time, customer } = req.body;
+
+    if (isPastDateTime(date, time)) {
+      return res.status(400).json({ success: false, error: 'Geçmiş saat için slot oluşturulamaz' });
+    }
     
     // Çakışma kontrolü
     const existing = await Slot.findOne({
@@ -567,6 +758,13 @@ router.patch('/:slotId/book', async (req, res) => {
       });
     }
 
+    if (isPastDateTime(slot.date, slot.time)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Geçmiş saat için randevu oluşturulamaz'
+      });
+    }
+
     // Berber takvimli randevu alıyor mu kontrol et
     if (!slot.barber.features.calendarBooking) {
       return res.status(403).json({ 
@@ -624,13 +822,21 @@ router.patch('/:slotId/book', async (req, res) => {
 // Berber tarafından manuel olarak slot/randevu oluştur
 router.post('/create-manual', auth, checkFeature('calendarBooking'), async (req, res) => {
   try {
-    const { date, time, customerName, serviceId, price } = req.body;
+    const { date, time, customerName, customerPhone, serviceId, price, allowPastManual } = req.body;
+    const isHistoricalRecord = Boolean(allowPastManual && isPastDateTime(date, time));
 
     // Validasyon
     if (!date || !time || !customerName || !serviceId) {
       return res.status(400).json({ 
         success: false, 
         error: 'Tarih, saat, müşteri adı ve hizmet zorunludur' 
+      });
+    }
+
+    if (isPastDateTime(date, time) && !allowPastManual) {
+      return res.status(400).json({
+        success: false,
+        error: 'Geçmiş saat için randevu oluşturulamaz'
       });
     }
 
@@ -663,12 +869,13 @@ router.post('/create-manual', auth, checkFeature('calendarBooking'), async (req,
       slot.customer = {
         name: customerName,
         service: service.name,
-        phone: null,
+        phone: customerPhone ? String(customerPhone).trim() : null,
         notes: null
       };
       slot.service = serviceId;
       slot.manualPrice = price || null;
       slot.isManualAppointment = true;
+      slot.isHistoricalRecord = isHistoricalRecord;
       await slot.save();
     } else {
       // Yeni slot oluştur
@@ -680,12 +887,13 @@ router.post('/create-manual', auth, checkFeature('calendarBooking'), async (req,
         customer: {
           name: customerName,
           service: service.name,
-          phone: null,
+          phone: customerPhone ? String(customerPhone).trim() : null,
           notes: null
         },
         service: serviceId,
         manualPrice: price || null,
-        isManualAppointment: true
+        isManualAppointment: true,
+        isHistoricalRecord
       });
       await slot.save();
     }
@@ -779,7 +987,7 @@ router.post('/:slotId/remind-barber', auth, async (req, res) => {
 // Manuel oluşturulan randevuyu düzenle
 router.patch('/:slotId/edit', auth, checkFeature('calendarBooking'), async (req, res) => {
   try {
-    const { customerName, serviceId, price } = req.body;
+    const { customerName, customerPhone, serviceId, price, date, time } = req.body;
 
     // Slot kontrolü
     const slot = await Slot.findOne({ _id: req.params.slotId, barber: req.barberId });
@@ -792,9 +1000,30 @@ router.patch('/:slotId/edit', auth, checkFeature('calendarBooking'), async (req,
       return res.status(403).json({ success: false, error: 'Sadece manuel oluşturduğunuz randevuları düzenleyebilirsiniz' });
     }
 
-    // Sadece confirmed status'undaki randevular düzenlenebilir
-    if (slot.status !== 'confirmed') {
-      return res.status(400).json({ success: false, error: 'Sadece onaylı randevular düzenlenebilir' });
+    if (slot.isHistoricalRecord) {
+      return res.status(400).json({ success: false, error: 'Tarihi kayıtlar düzenlenemez, gerekirse yeni kayıt açınız' });
+    }
+
+    const targetDate = String(date || slot.date || '').trim();
+    const targetTime = String(time || slot.time || '').trim();
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+      return res.status(400).json({ success: false, error: 'Geçerli bir tarih giriniz (YYYY-MM-DD)' });
+    }
+
+    if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(targetTime)) {
+      return res.status(400).json({ success: false, error: 'Geçerli bir saat giriniz (HH:mm)' });
+    }
+
+    const clashSlot = await Slot.findOne({
+      barber: req.barberId,
+      date: targetDate,
+      time: targetTime,
+      _id: { $ne: slot._id }
+    });
+
+    if (clashSlot) {
+      return res.status(400).json({ success: false, error: 'Bu tarih/saatte başka bir slot mevcut' });
     }
 
     // Barber ve service kontrolü
@@ -809,10 +1038,15 @@ router.patch('/:slotId/edit', auth, checkFeature('calendarBooking'), async (req,
     }
 
     // Slot bilgilerini güncelle
+    slot.customer = slot.customer || {};
     slot.customer.name = customerName;
+    slot.customer.phone = customerPhone ? String(customerPhone).trim() : '';
     slot.customer.service = service.name;
+    slot.date = targetDate;
+    slot.time = targetTime;
     slot.service = serviceId;
     slot.manualPrice = price || null;
+    slot.updatedAt = new Date();
     await slot.save();
 
     // Güncellenmiş slot'u service bilgisiyle döndür
@@ -848,6 +1082,10 @@ router.patch('/:slotId/cancel', auth, async (req, res) => {
 
     if (slot.barber.toString() !== req.barberId.toString()) {
       return res.status(403).json({ success: false, error: 'Yetkisiz erişim' });
+    }
+
+    if (slot.isHistoricalRecord) {
+      return res.status(400).json({ success: false, error: 'Tarihi kayıtlar iptal akışına alınamaz' });
     }
 
     // Slot'u iptal et

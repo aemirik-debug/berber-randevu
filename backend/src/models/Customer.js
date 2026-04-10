@@ -24,7 +24,19 @@ const customerSchema = new mongoose.Schema({
     status: { type: String, default: 'pending' },
     createdAt: Date,
     reminderSentAt: Date,
-    cancelReason: String
+    cancelReason: String,
+    rescheduleApproval: {
+      phase: String,
+      oldDate: String,
+      oldTime: String,
+      proposedDate: String,
+      proposedTime: String,
+      customerDecision: String,
+      barberDecision: String,
+      requestedAt: Date,
+      customerRespondedAt: Date,
+      barberRespondedAt: Date
+    }
   }],
 
   // Faturalar

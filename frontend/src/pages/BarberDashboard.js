@@ -5,6 +5,7 @@ import ShopSettings from './ShopSettings';
 import SlotDetailsModal from '../components/SlotDetailsModal';
 import CreateManualSlotModal from '../components/CreateManualSlotModal';
 import EditSlotModal from '../components/EditSlotModal';
+import ActionConfirmModal from '../components/ActionConfirmModal';
 import api from '../services/api';
 import { connectSocket, disconnectSocket } from '../services/socket';
 import './BarberDashboard.css';
@@ -91,6 +92,38 @@ function BarberDashboard() {
   const [selectedSlotForEdit, setSelectedSlotForEdit] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [slotsError, setSlotsError] = useState('');
+  const [nowTick, setNowTick] = useState(Date.now());
+  const [confirmAction, setConfirmAction] = useState(null);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowTick(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const todayIso = useMemo(() => {
+    const now = new Date(nowTick);
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }, [nowTick]);
+
+  const nowTimeHHmm = useMemo(() => {
+    const now = new Date(nowTick);
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  }, [nowTick]);
+
+  const visibleMySlots = useMemo(() => {
+    return mySlots.map((slot) => ({
+      ...slot,
+      isPastSlot: slotDate === todayIso && String(slot.time || '') <= nowTimeHHmm,
+    }));
+  }, [mySlots, slotDate, todayIso, nowTimeHHmm]);
+
+  const actionableSlots = useMemo(
+    () => visibleMySlots.filter((slot) => !slot.isPastSlot),
+    [visibleMySlots]
+  );
 
   useEffect(() => {
     if (activeTab === 'calendar') {
@@ -189,6 +222,45 @@ function BarberDashboard() {
     } catch (err) {
       console.error('Hizmet silme hatası', err);
       setServiceMessage({ text: err.response?.data?.error || err.message, type: 'error' });
+    }
+  };
+
+  const closeConfirmAction = () => setConfirmAction(null);
+
+  const executeConfirmAction = async () => {
+    if (!confirmAction) {
+      return;
+    }
+
+    const action = confirmAction;
+    closeConfirmAction();
+
+    if (action.kind === 'toggle-availability') {
+      const slot = action.slot;
+      try {
+        if (slot.isPastSlot) return;
+        await api.patch(`/slots/${slot._id}/status`, { status: action.newStatus });
+        setMySlots((prev) => prev.map((item) => (item._id === slot._id ? { ...item, status: action.newStatus } : item)));
+        setActionMessage({
+          text: action.newStatus === 'blocked' ? 'Saat bloke edildi.' : 'Bloke kaldırıldı.',
+          type: 'success',
+        });
+      } catch (err) {
+        setSlotsError(err.response?.data?.error || 'Durum güncellenemedi');
+      }
+      return;
+    }
+
+    if (action.kind === 'cancel-slot') {
+      const slot = action.slot;
+      try {
+        if (slot.isPastSlot) return;
+        await api.patch(`/slots/${slot._id}/cancel`, { reason: action.reasonValue || 'Berber tarafından iptal edildi' });
+        setMySlots((prev) => prev.map((item) => (item._id === slot._id ? { ...item, status: 'cancelled', cancelReason: action.reasonValue || 'Berber tarafından iptal edildi' } : item)));
+        setActionMessage({ text: 'Randevu iptal edildi', type: 'success' });
+      } catch (err) {
+        setActionMessage({ text: err.response?.data?.error || 'İptal edilemedi', type: 'error' });
+      }
     }
   };
 
@@ -439,14 +511,14 @@ function BarberDashboard() {
                 </div>
 
                 {/* İstatistik Kartları */}
-                {mySlots && mySlots.length > 0 && (
+                {visibleMySlots && visibleMySlots.length > 0 && (
                   <div className="row g-3 mb-4">
                     <div className="col-md-4">
                       <div className="card border-0 rounded-3 shadow-sm h-100" style={{backgroundColor: '#e8f4f8', borderLeft: '4px solid #3498db'}}>
                         <div className="card-body">
                           <h6 className="text-muted small text-uppercase fw-bold mb-2">📲 Sistemden Gelen</h6>
                           <h3 className="fw-bold mb-0" style={{color: '#3498db'}}>
-                            {mySlots.filter(s => !s.isManualAppointment && s.status !== 'cancelled').length}
+                            {actionableSlots.filter(s => !s.isManualAppointment && s.status !== 'cancelled').length}
                           </h3>
                         </div>
                       </div>
@@ -456,7 +528,7 @@ function BarberDashboard() {
                         <div className="card-body">
                           <h6 className="text-muted small text-uppercase fw-bold mb-2">✍️ Berber Oluşturdu</h6>
                           <h3 className="fw-bold mb-0" style={{color: '#f39c12'}}>
-                            {mySlots.filter(s => s.isManualAppointment && s.status !== 'cancelled').length}
+                            {actionableSlots.filter(s => s.isManualAppointment && s.status !== 'cancelled').length}
                           </h3>
                         </div>
                       </div>
@@ -466,7 +538,7 @@ function BarberDashboard() {
                         <div className="card-body">
                           <h6 className="text-muted small text-uppercase fw-bold mb-2">👥 Toplam Müşteri</h6>
                           <h3 className="fw-bold mb-0" style={{color: '#27ae60'}}>
-                            {mySlots.filter(s => (s.customerName || s.customer?.name) && s.status !== 'cancelled').length}
+                            {actionableSlots.filter(s => (s.customerName || s.customer?.name) && s.status !== 'cancelled').length}
                           </h3>
                         </div>
                       </div>
@@ -475,51 +547,83 @@ function BarberDashboard() {
                 )}
 
                 <div className="list-group">
-                  {mySlots && mySlots.length > 0 ? mySlots.map(s => (
-                    <div key={s._id} className={`list-group-item d-flex justify-content-between align-items-center ${s.status === 'available' ? '' : s.status === 'blocked' ? 'bg-warning' : 'bg-light'}`}>
+                  <div className="d-flex justify-content-end mb-2">
+                    {slotDate <= todayIso && (
+                      <button
+                        type="button"
+                        className="barber-history-entry-btn"
+                        onClick={() => {
+                          setSelectedSlotForManual({
+                            date: slotDate,
+                            time: '',
+                            allowFlexibleDateTime: true,
+                          });
+                          setShowCreateManualSlot(true);
+                        }}
+                      >
+                        📝 Geçmiş Randevu Ekle
+                      </button>
+                    )}
+                  </div>
+                  {visibleMySlots && visibleMySlots.length > 0 ? visibleMySlots.map(s => {
+                    const statusLc = String(s.status || '').toLowerCase();
+                    const hasAppointment = Boolean(s.customerName || s.customer?.name);
+                    const showPastOnly = s.isPastSlot && statusLc === 'available' && !hasAppointment;
+                    const hideActions = s.isPastSlot || statusLc === 'confirmed';
+
+                    return (
+                    <div key={s._id} className={`list-group-item d-flex justify-content-between align-items-center ${s.status === 'available' ? '' : s.status === 'blocked' ? 'bg-warning' : 'bg-light'} ${s.isPastSlot ? 'barber-past-slot-item' : ''}`}>
                       <div>
                         <strong>{s.time}</strong> - 
                         <span className={`badge ${
-                          s.status === 'available' ? 'bg-secondary' :
+                          showPastOnly ? 'bg-dark' : (s.status === 'available' ? 'bg-secondary' :
                           s.status === 'blocked' ? 'bg-warning' :
                           s.status === 'confirmed' ? 'bg-success' :
                           s.status === 'cancelled' ? 'bg-danger' :
-                          'bg-secondary'
+                          'bg-secondary')
                         }`}>{
-                          s.status === 'available' ? 'Müsait' :
+                          showPastOnly ? 'Geçti' : (s.status === 'available' ? 'Müsait' :
                           s.status === 'blocked' ? 'Bloklu' :
                           s.status === 'confirmed' ? 'Randevu Alındı' :
                           s.status === 'cancelled' ? 'İptal Edildi' :
-                          s.status
+                          s.status)
                         }</span>
                         {(s.customerName || s.customer?.name) && <span className="ms-2">({s.customerName || s.customer?.name})</span>}
                       </div>
-                      <div>
+                      {!hideActions && <div>
                         {/* Müşteri olmayan slot - Blokla/Aç ve Randevu Oluştur */}
                         {!(s.customerName || s.customer?.name) && (
                           <div className="btn-group btn-group-sm" role="group">
                             <button 
                               className="btn btn-outline-primary" 
                               onClick={() => {
+                                if (s.isPastSlot) return;
                                 setSelectedSlotForManual({ date: slotDate, time: s.time, _id: s._id });
                                 setShowCreateManualSlot(true);
                               }}
+                              disabled={s.isPastSlot}
                               title="Randevu oluştur"
                             >
                               ➕ Randevu Oluştur
                             </button>
                             <button 
                               className="btn btn-outline-secondary" 
-                              onClick={async () => {
+                              onClick={() => {
+                                if (s.isPastSlot) return;
                                 const newStatus = s.status === 'available' ? 'blocked' : 'available';
-                                try {
-                                  await api.patch(`/slots/${s._id}/status`, { status: newStatus });
-                                  setMySlots(prev => prev.map(x => x._id === s._id ? { ...x, status: newStatus } : x));
-                                } catch (err) { 
-                                  console.error('Slot durum güncelleme hatası:', err);
-                                  setSlotsError(err.response?.data?.error || 'Durum güncellenemedi');
-                                }
+                                setConfirmAction({
+                                  kind: 'toggle-availability',
+                                  slot: s,
+                                  newStatus,
+                                  title: newStatus === 'blocked' ? 'Saati Bloke Et' : 'Blokeyi Kaldır',
+                                  message: newStatus === 'blocked'
+                                    ? 'Bu saati bloke etmek istiyor musunuz? Slot müşterilere kapatılacak.'
+                                    : 'Bu saatin blokesini kaldırmak istiyor musunuz? Slot yeniden müsait olacak.',
+                                  confirmText: newStatus === 'blocked' ? 'Bloke Et' : 'Blokeyi Kaldır',
+                                  variant: newStatus === 'blocked' ? 'danger' : 'warning',
+                                });
                               }}
+                              disabled={s.isPastSlot}
                               title={s.status === 'available' ? 'Saati blokla' : 'Saati aç'}
                             >
                               {s.status === 'available' ? '🔒 Blokla' : '🔓 Aç'}
@@ -533,16 +637,20 @@ function BarberDashboard() {
                             {s.status !== 'cancelled' && (
                               <button 
                                 className="btn btn-outline-danger" 
-                                onClick={async () => {
-                                  if (!window.confirm(`${s.time} saatindeki randevuyu iptal etmek istediğinize emin misiniz?`)) return;
-                                  try {
-                                    await api.patch(`/slots/${s._id}/cancel`, { reason: 'Berber tarafından iptal edildi' });
-                                    setMySlots(prev => prev.map(x => x._id === s._id ? { ...x, status: 'cancelled', cancelReason: 'Berber tarafından iptal edildi' } : x));
-                                  } catch (err) {
-                                    console.error('Randevu iptal hatası:', err);
-                                    setSlotsError(err.response?.data?.error || 'İptal edilemedi');
-                                  }
+                                onClick={() => {
+                                  if (s.isPastSlot) return;
+                                  setConfirmAction({
+                                    kind: 'cancel-slot',
+                                    slot: s,
+                                    title: 'Randevuyu İptal Et',
+                                    message: `${s.time} saatindeki randevuyu iptal etmek istiyor musunuz?`,
+                                    confirmText: 'İptal Et',
+                                    variant: 'danger',
+                                    reasonValue: 'Berber tarafından iptal edildi',
+                                    showReason: true,
+                                  });
                                 }}
+                                disabled={s.isPastSlot}
                                 title="Randevuyu iptal et"
                               >
                                 ❌ İptal
@@ -550,9 +658,9 @@ function BarberDashboard() {
                             )}
                           </div>
                         )}
-                      </div>
+                      </div>}
                     </div>
-                  )) : <div className="text-muted text-center py-3">Henüz slot yok.</div>}
+                  )}) : <div className="text-muted text-center py-3">Bu tarihte gelecekteki slot yok.</div>}
                 </div>
               </div>
             </div>
@@ -678,19 +786,14 @@ function BarberDashboard() {
           setShowCreateManualSlot(false);
           setSelectedSlotForManual(null);
         }}
-        onSuccess={(newSlot) => {
-          // Slot listesini yenile
-          setMySlots(prev => [
-            ...prev.filter(s => !(s.date === slotDate && s.time === selectedSlotForManual.time)),
-            { 
-              _id: newSlot._id, 
-              date: slotDate, 
-              time: selectedSlotForManual.time, 
-              status: 'confirmed', 
-              customerName: selectedSlotForManual.customerName 
-            }
-          ].sort((a, b) => a.time.localeCompare(b.time)));
-          
+        onSuccess={async () => {
+          try {
+            const res = await api.get('/slots/my-slots', { params: { date: slotDate } });
+            setMySlots(res.data.data || []);
+          } catch (err) {
+            console.error('Slotları yenileme hatası:', err);
+          }
+
           setActionMessage({ text: '✅ Randevu başarıyla oluşturuldu!', type: 'success' });
         }}
       />
@@ -711,21 +814,38 @@ function BarberDashboard() {
         }}
       />
 
-      {/* toast notifications */}
+      {/* bootstrap notifications */}
       {serviceMessage.text && (
-        <div className={`toast align-items-center text-white border-0 ${serviceMessage.text ? 'show' : ''}`} 
-          style={{backgroundColor: serviceMessage.type === 'success' ? '#27ae60' : '#e74c3c', position: 'fixed', top: 20, right: 20, zIndex: 1050}}>
-          <div className="toast-body fw-semibold">{serviceMessage.text}</div>
-          <button type="button" className="btn-close btn-close-white me-2 m-auto" onClick={() => setServiceMessage({ text: '', type: 'success' })}></button>
+        <div className={`alert alert-dismissible fade show ${serviceMessage.type === 'success' ? 'alert-success' : 'alert-danger'}`} 
+          role="alert"
+          style={{position: 'fixed', top: 20, right: 20, zIndex: 1050, maxWidth: '420px', boxShadow: '0 12px 28px rgba(44, 62, 80, 0.15)'}}>
+          <strong className="me-1">{serviceMessage.type === 'success' ? 'Başarılı!' : 'Hata!'}</strong>
+          {serviceMessage.text}
+          <button type="button" className="btn-close" onClick={() => setServiceMessage({ text: '', type: 'success' })}></button>
         </div>
       )}
       {actionMessage.text && (
-        <div className={`toast align-items-center text-white border-0 ${actionMessage.text ? 'show' : ''}`} 
-          style={{backgroundColor: actionMessage.type === 'success' ? '#27ae60' : '#e74c3c', position: 'fixed', top: 70, right: 20, zIndex: 1050}}>
-          <div className="toast-body fw-semibold">{actionMessage.text}</div>
-          <button type="button" className="btn-close btn-close-white me-2 m-auto" onClick={() => setActionMessage({ text: '', type: 'success' })}></button>
+        <div className={`alert alert-dismissible fade show ${actionMessage.type === 'success' ? 'alert-success' : 'alert-danger'}`} 
+          role="alert"
+          style={{position: 'fixed', top: 70, right: 20, zIndex: 1050, maxWidth: '420px', boxShadow: '0 12px 28px rgba(44, 62, 80, 0.15)'}}>
+          <strong className="me-1">{actionMessage.type === 'success' ? 'Başarılı!' : 'Hata!'}</strong>
+          {actionMessage.text}
+          <button type="button" className="btn-close" onClick={() => setActionMessage({ text: '', type: 'success' })}></button>
         </div>
       )}
+
+      <ActionConfirmModal
+        show={Boolean(confirmAction)}
+        title={confirmAction?.title || 'İşlemi Onayla'}
+        message={confirmAction?.message || ''}
+        confirmText={confirmAction?.confirmText || 'Onayla'}
+        variant={confirmAction?.variant || 'danger'}
+        showReason={Boolean(confirmAction?.showReason)}
+        reasonValue={confirmAction?.reasonValue || ''}
+        onReasonChange={(value) => setConfirmAction((prev) => (prev ? { ...prev, reasonValue: value } : prev))}
+        onConfirm={executeConfirmAction}
+        onClose={closeConfirmAction}
+      />
     </div>
   );
 }

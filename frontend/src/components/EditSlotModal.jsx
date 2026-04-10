@@ -3,6 +3,9 @@ import api from '../services/api';
 
 function EditSlotModal({ show, slot, services, onClose, onSuccess }) {
   const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [date, setDate] = useState('');
+  const [time, setTime] = useState('');
   const [serviceId, setServiceId] = useState('');
   const [price, setPrice] = useState('');
   const [loading, setLoading] = useState(false);
@@ -11,6 +14,9 @@ function EditSlotModal({ show, slot, services, onClose, onSuccess }) {
   useEffect(() => {
     if (show && slot) {
       setCustomerName(slot.customer?.name || slot.customerName || '');
+      setCustomerPhone(slot.customer?.phone || slot.customerPhone || '');
+      setDate(slot.date || '');
+      setTime(slot.time || '');
       setServiceId(slot.service?._id || '');
       setPrice(slot.manualPrice !== null && slot.manualPrice !== undefined ? slot.manualPrice : '');
     }
@@ -35,6 +41,9 @@ function EditSlotModal({ show, slot, services, onClose, onSuccess }) {
     try {
       const res = await api.patch(`/slots/${slot._id}/edit`, {
         customerName: customerName.trim(),
+        customerPhone: customerPhone.trim() || null,
+        date,
+        time,
         serviceId,
         price: price ? parseFloat(price) : null
       }, {
@@ -138,6 +147,46 @@ function EditSlotModal({ show, slot, services, onClose, onSuccess }) {
                       </option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              <div className="row g-3 mb-4">
+                <div className="col-12 col-md-6">
+                  <label className="form-label fw-semibold small text-uppercase text-muted">Tarih</label>
+                  <input
+                    type="date"
+                    className="form-control"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    disabled={loading}
+                  />
+                </div>
+                <div className="col-12 col-md-6">
+                  <label className="form-label fw-semibold small text-uppercase text-muted">Saat</label>
+                  <input
+                    type="time"
+                    className="form-control"
+                    value={time}
+                    onChange={(e) => setTime(e.target.value)}
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <label className="form-label fw-semibold small text-uppercase text-muted">Müşteri Telefonu (Opsiyonel)</label>
+                <div className="input-group">
+                  <span className="input-group-text bg-light border-end-0">
+                    <span style={{color: '#3498db'}}>📞</span>
+                  </span>
+                  <input
+                    type="tel"
+                    className="form-control border-start-0 ps-0"
+                    placeholder="05xx xxx xx xx"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    disabled={loading}
+                  />
                 </div>
               </div>
 

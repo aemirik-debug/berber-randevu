@@ -46,6 +46,7 @@ function CustomerHome() {
   const [selectedEditSlotId, setSelectedEditSlotId] = useState('');
   const [loadingEditSlots, setLoadingEditSlots] = useState(false);
   const [savingEditAppointmentId, setSavingEditAppointmentId] = useState('');
+  const [respondingRescheduleAppointmentId, setRespondingRescheduleAppointmentId] = useState('');
   const [activeBarberSlideIndex, setActiveBarberSlideIndex] = useState(0);
   const [activePastSlideIndex, setActivePastSlideIndex] = useState(0);
   const headerMenuRef = useRef(null);
@@ -172,11 +173,23 @@ function CustomerHome() {
 
   const isPendingLikeStatus = (status) => {
     const statusLc = String(status || '').toLowerCase();
-    return statusLc === 'pending' || statusLc === 'booked' || statusLc === 'randevu alındı';
+    return [
+      'pending',
+      'booked',
+      'randevu alındı',
+      'saat değişikliği müşteri onayı bekleniyor',
+      'saat değişikliği berber onayı bekleniyor',
+    ].includes(statusLc);
   };
 
   const getQuickStatusMeta = (status, appointment) => {
     const statusLc = String(status || '').toLowerCase();
+    if (statusLc === 'saat değişikliği müşteri onayı bekleniyor') {
+      return { tone: 'warning', icon: '📝', label: 'Saat Onayın Bekleniyor' };
+    }
+    if (statusLc === 'saat değişikliği berber onayı bekleniyor') {
+      return { tone: 'pending', icon: '🕒', label: 'Berber Son Onayı Bekleniyor' };
+    }
     if (statusLc === 'confirmed') {
       return { tone: 'approved', icon: '✅', label: 'Onaylandı' };
     }
@@ -208,7 +221,7 @@ function CustomerHome() {
     }
 
     const statusLc = String(appointment.status || '').toLowerCase();
-    return statusLc !== 'cancelled' && statusLc !== 'reddedildi';
+    return statusLc !== 'cancelled' && statusLc !== 'reddedildi' && statusLc !== 'confirmed' && statusLc !== 'onaylandı';
   };
 
   const canEditAppointment = (appointment) => {
@@ -224,6 +237,14 @@ function CustomerHome() {
     }
 
     return isPendingLikeStatus(appointment.status);
+  };
+
+  const canRespondToRescheduleProposal = (appointment) => {
+    if (!appointment) {
+      return false;
+    }
+
+    return String(appointment?.rescheduleApproval?.phase || '') === 'awaiting_customer';
   };
 
   const loadRescheduleSlots = async (barberId, nextDate) => {
@@ -391,6 +412,40 @@ function CustomerHome() {
     }
   };
 
+  const handleRespondToRescheduleProposal = async (appointment, decision) => {
+    if (!appointment || !canRespondToRescheduleProposal(appointment)) {
+      return;
+    }
+
+    try {
+      setRespondingRescheduleAppointmentId(appointment._id);
+      const res = await axios.patch(
+        `http://localhost:5001/api/customers/appointments/${currentCustomerId}/${appointment._id}/reschedule-response`,
+        { decision },
+        { headers: getAuthHeaders() }
+      );
+
+      const nextAppointment = res.data?.appointment;
+      setAppointments((prev) => prev.map((item) => (
+        item._id === appointment._id
+          ? { ...item, ...nextAppointment }
+          : item
+      )));
+
+      setAlertMessage(
+        decision === 'accept'
+          ? 'Yeni saati kabul ettiniz. Berberin son onayı bekleniyor.'
+          : 'Yeni saat önerisini reddettiniz. Önceki randevu saati korunuyor.'
+      );
+      setAlertType('success');
+    } catch (err) {
+      setAlertMessage(err.response?.data?.message || 'Saat önerisi yanıtlanamadı.');
+      setAlertType('danger');
+    } finally {
+      setRespondingRescheduleAppointmentId('');
+    }
+  };
+
   useEffect(() => {
     const token = localStorage.getItem('customerToken');
     const customerInfo = getCustomerInfo();
@@ -471,6 +526,7 @@ useEffect(() => {
           status: data.status || a.status,
           date: data.date || a.date,
           time: data.time || a.time,
+          rescheduleApproval: data.rescheduleApproval || a.rescheduleApproval,
         };
       }
       return a;
@@ -833,6 +889,8 @@ const handleRemoveFavorite = async (barberId) => {
         reminderSentAt: appointment.reminderSentAt || null,
         canCancel: canCancelAppointment(appointment),
         canEdit: canEditAppointment(appointment),
+        canRespondReschedule: canRespondToRescheduleProposal(appointment),
+        rescheduleApproval: appointment.rescheduleApproval || null,
       };
     });
 
@@ -951,6 +1009,8 @@ const handleRemoveFavorite = async (barberId) => {
   const getStatusLabel = (status, appointment) => {
     if (status === 'pending' || status === 'booked') return 'Onay Bekleyen';
     if (status === 'confirmed') return 'Onaylandı';
+    if (status === 'Saat Değişikliği Müşteri Onayı Bekleniyor') return 'Saat Onayın Bekleniyor';
+    if (status === 'Saat Değişikliği Berber Onayı Bekleniyor') return 'Berber Son Onayı Bekleniyor';
     if (status === 'cancelled') {
       const reasonLc = String(appointment?.cancelReason || '').toLowerCase();
       if (reasonLc.includes('müşteri')) return 'İptal Ettin';
@@ -964,6 +1024,8 @@ const handleRemoveFavorite = async (barberId) => {
   const getStatusColor = (status) => {
     if (status === 'confirmed') return 'success';
     if (status === 'pending' || status === 'booked') return 'info';
+    if (status === 'Saat Değişikliği Müşteri Onayı Bekleniyor') return 'warning';
+    if (status === 'Saat Değişikliği Berber Onayı Bekleniyor') return 'primary';
     if (status === 'Randevu Alındı') return 'info';
     if (status === 'cancelled') return 'danger';
     return 'secondary';
@@ -1153,10 +1215,12 @@ const handleRemoveFavorite = async (barberId) => {
       <div className="home-quick-note mt-3">
         <div className="home-quick-note-title">Hızlı bakış</div>
         <div className="home-quick-note-text">
-          <span className={`home-quick-note-status-pill home-quick-note-status-pill-${quickNoteStatus.tone}`}>
-            <span>{quickNoteStatus.icon}</span>
-            <span>{quickNoteStatus.label}</span>
-          </span>
+          {String(quickNoteStatus.label || '').toLowerCase().includes('onay bekleniyor') ? null : (
+            <span className={`home-quick-note-status-pill home-quick-note-status-pill-${quickNoteStatus.tone}`}>
+              <span>{quickNoteStatus.icon}</span>
+              <span>{quickNoteStatus.label}</span>
+            </span>
+          )}
         </div>
         {quickNoteStatus.items.length > 0 ? (
           <div className="home-quick-note-list mt-2">
@@ -1207,6 +1271,32 @@ const handleRemoveFavorite = async (barberId) => {
                   ) : item.reminderSentAt ? (
                     <span className="small text-muted">Hatırlatma gönderildi.</span>
                   ) : null}
+
+                  {item.canRespondReschedule && (
+                    <>
+                      <div className="small text-muted">
+                        Önerilen saat: {item.rescheduleApproval?.proposedDate || '-'} {item.rescheduleApproval?.proposedTime || '--:--'}
+                      </div>
+                      <div className="d-flex gap-2 mt-2">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-success"
+                          disabled={respondingRescheduleAppointmentId === item.id}
+                          onClick={() => handleRespondToRescheduleProposal(activeAppointments.find((appointment) => appointment._id === item.id), 'accept')}
+                        >
+                          Kabul Et
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-danger"
+                          disabled={respondingRescheduleAppointmentId === item.id}
+                          onClick={() => handleRespondToRescheduleProposal(activeAppointments.find((appointment) => appointment._id === item.id), 'reject')}
+                        >
+                          Reddet
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {editingAppointmentId === item.id && (
@@ -1570,6 +1660,7 @@ const handleRemoveFavorite = async (barberId) => {
                           <th>Berber</th>
                           <th>Hizmet</th>
                           <th>Durum</th>
+                          <th>İşlem</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1580,6 +1671,30 @@ const handleRemoveFavorite = async (barberId) => {
                             <td>{app.barberName}</td>
                             <td>{app.service?.name || '-'}{app.service?.price ? ` (₺${app.service.price})` : ''}</td>
                             <td><span className={`badge text-bg-${getStatusColor(app.status)}`}>{getStatusLabel(app.status, app)}</span></td>
+                            <td>
+                              {canRespondToRescheduleProposal(app) ? (
+                                <div className="d-flex gap-2 flex-wrap">
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm btn-success"
+                                    disabled={respondingRescheduleAppointmentId === app._id}
+                                    onClick={() => handleRespondToRescheduleProposal(app, 'accept')}
+                                  >
+                                    Kabul Et
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm btn-outline-danger"
+                                    disabled={respondingRescheduleAppointmentId === app._id}
+                                    onClick={() => handleRespondToRescheduleProposal(app, 'reject')}
+                                  >
+                                    Reddet
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-muted small">-</span>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -1598,6 +1713,26 @@ const handleRemoveFavorite = async (barberId) => {
                           <span className="fw-semibold">Hizmet: </span>
                           {app.service?.name || '-'}{app.service?.price ? ` (₺${app.service.price})` : ''}
                         </div>
+                        {canRespondToRescheduleProposal(app) && (
+                          <div className="d-flex gap-2 mt-2">
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-success"
+                              disabled={respondingRescheduleAppointmentId === app._id}
+                              onClick={() => handleRespondToRescheduleProposal(app, 'accept')}
+                            >
+                              Kabul Et
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline-danger"
+                              disabled={respondingRescheduleAppointmentId === app._id}
+                              onClick={() => handleRespondToRescheduleProposal(app, 'reject')}
+                            >
+                              Reddet
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

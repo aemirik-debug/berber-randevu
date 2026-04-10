@@ -3,16 +3,25 @@ import api from '../services/api';
 
 function CreateManualSlotModal({ show, slot, services, onClose, onSuccess }) {
   const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [manualDate, setManualDate] = useState('');
+  const [manualTime, setManualTime] = useState('');
   const [serviceId, setServiceId] = useState('');
   const [price, setPrice] = useState('');
+  const [allowPastEntry, setAllowPastEntry] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const isFlexibleDateTime = !slot?._id;
 
   useEffect(() => {
     if (show && services.length > 0) {
       setServiceId(services[0]._id);
+      setManualDate(slot?.date || '');
+      setManualTime(slot?.time || '');
+      setAllowPastEntry(Boolean(slot?.allowFlexibleDateTime));
     }
-  }, [show, services]);
+  }, [show, services, slot]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -28,23 +37,34 @@ function CreateManualSlotModal({ show, slot, services, onClose, onSuccess }) {
       return;
     }
 
+    if (!manualDate || !manualTime) {
+      setError('Tarih ve saat seçiniz');
+      return;
+    }
+
     setLoading(true);
 
     try {
       const res = await api.post('/slots/create-manual', {
-        date: slot.date,
-        time: slot.time,
+        date: manualDate,
+        time: manualTime,
         customerName: customerName.trim(),
+        customerPhone: customerPhone.trim() || null,
         serviceId,
-        price: price ? parseFloat(price) : null
+        price: price ? parseFloat(price) : null,
+        allowPastManual: allowPastEntry
       }, {
         headers: { Authorization: `Bearer ${localStorage.getItem('barberToken')}` }
       });
 
       // Form sıfırla
       setCustomerName('');
+      setCustomerPhone('');
+      setManualDate(slot?.date || '');
+      setManualTime(slot?.time || '');
       setServiceId(services.length > 0 ? services[0]._id : '');
       setPrice('');
+      setAllowPastEntry(false);
 
       // Success callback
       if (onSuccess) {
@@ -74,7 +94,7 @@ function CreateManualSlotModal({ show, slot, services, onClose, onSuccess }) {
                 <span className="me-2">➕</span>Randevu Oluştur
               </h5>
               <small className="text-muted d-block mt-1">
-                {slot?.date && slot?.time ? `${slot.date} - ${slot.time}` : 'Seçili saat'}
+                {manualDate && manualTime ? `${manualDate} - ${manualTime}` : 'Seçili saat'}
               </small>
             </div>
             <button 
@@ -95,6 +115,29 @@ function CreateManualSlotModal({ show, slot, services, onClose, onSuccess }) {
             )}
 
             <form onSubmit={handleSubmit}>
+              <div className="row g-3 mb-4">
+                <div className="col-12 col-md-6">
+                  <label className="form-label fw-semibold small text-uppercase text-muted">Tarih</label>
+                  <input
+                    type="date"
+                    className="form-control"
+                    value={manualDate}
+                    onChange={(e) => setManualDate(e.target.value)}
+                    disabled={loading || !isFlexibleDateTime}
+                  />
+                </div>
+                <div className="col-12 col-md-6">
+                  <label className="form-label fw-semibold small text-uppercase text-muted">Saat</label>
+                  <input
+                    type="time"
+                    className="form-control"
+                    value={manualTime}
+                    onChange={(e) => setManualTime(e.target.value)}
+                    disabled={loading || !isFlexibleDateTime}
+                  />
+                </div>
+              </div>
+
               {/* Müşteri Adı */}
               <div className="mb-4">
                 <label className="form-label fw-semibold small text-uppercase text-muted">
@@ -142,6 +185,26 @@ function CreateManualSlotModal({ show, slot, services, onClose, onSuccess }) {
                 </div>
               </div>
 
+              <div className="mb-4">
+                <label className="form-label fw-semibold small text-uppercase text-muted">
+                  Müşteri Telefonu (Opsiyonel)
+                </label>
+                <div className="input-group">
+                  <span className="input-group-text bg-light border-end-0">
+                    <span style={{color: '#3498db'}}>📞</span>
+                  </span>
+                  <input
+                    type="tel"
+                    className="form-control border-start-0 ps-0"
+                    placeholder="05xx xxx xx xx"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    disabled={loading}
+                  />
+                </div>
+                <small className="text-muted">Bu numaraya randevu mesajı gönderilebilir.</small>
+              </div>
+
               {/* Fiyat (Opsiyonel) */}
               <div className="mb-4">
                 <label className="form-label fw-semibold small text-uppercase text-muted">
@@ -179,6 +242,20 @@ function CreateManualSlotModal({ show, slot, services, onClose, onSuccess }) {
                   <strong>İpucu:</strong> Fiyat alanını yazmazsanız, seçili hizmetin varsayılan fiyatı kullanılır. 
                   Randevu oluşturduktan sonra fiyatı istediğiniz zaman değiştirebilirsiniz.
                 </small>
+              </div>
+
+              <div className="form-check mb-4">
+                <input
+                  className="form-check-input"
+                  type="checkbox"
+                  id="allowPastEntry"
+                  checked={allowPastEntry}
+                  onChange={(e) => setAllowPastEntry(e.target.checked)}
+                  disabled={loading}
+                />
+                <label className="form-check-label" htmlFor="allowPastEntry">
+                  Geçmiş saat için kayıt olarak ekle (takip amaçlı)
+                </label>
               </div>
 
               {/* Buttons */}

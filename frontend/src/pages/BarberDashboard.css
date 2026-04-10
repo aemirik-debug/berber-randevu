@@ -240,6 +240,36 @@
   color: #3498db;
 }
 
+.barber-history-entry-btn {
+  border: 1px solid rgba(184, 115, 51, 0.45);
+  background: linear-gradient(135deg, rgba(248, 241, 231, 0.95), rgba(255, 255, 255, 0.95));
+  color: #8B4513;
+  border-radius: 999px;
+  padding: 0.42rem 0.82rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  transition: all 0.2s ease;
+  box-shadow: 0 6px 16px rgba(139, 69, 19, 0.08);
+}
+
+.barber-history-entry-btn:hover {
+  border-color: rgba(184, 115, 51, 0.7);
+  background: linear-gradient(135deg, rgba(245, 233, 214, 0.98), rgba(255, 255, 255, 0.98));
+  color: #6d3410;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(139, 69, 19, 0.14);
+}
+
+.barber-past-slot-item {
+  background: #f1f3f5 !important;
+  opacity: 0.9;
+}
+
+.barber-past-slot-item .btn:disabled {
+  opacity: 0.5;
+}
+
 /* Responsive */
 @media (max-width: 991.98px) {
   .barber-service-grid {

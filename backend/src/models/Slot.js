@@ -16,7 +16,16 @@ const slotSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['available', 'booked', 'blocked', 'home-service', 'confirmed', 'cancelled'],
+    enum: [
+      'available',
+      'booked',
+      'blocked',
+      'home-service',
+      'confirmed',
+      'cancelled',
+      'reschedule_pending_customer',
+      'reschedule_pending_barber'
+    ],
     default: 'available'
   },
   // Dolu slotlar için müşteri bilgisi
@@ -44,11 +53,47 @@ const slotSchema = new mongoose.Schema({
     type: Boolean,
     default: false  // Berber manuel oluşturursa true, müşteriden gelirse false
   },
+  isHistoricalRecord: {
+    type: Boolean,
+    default: false
+  },
   payment: {
     isPaid: { type: Boolean, default: false },
     amount: { type: Number, default: 0 }
   },
   cancelReason: String,
+  rescheduleApproval: {
+    phase: {
+      type: String,
+      enum: ['idle', 'awaiting_customer', 'awaiting_barber', 'completed', 'rejected_by_customer', 'rejected_by_barber'],
+      default: 'idle'
+    },
+    previousStatus: {
+      type: String,
+      default: ''
+    },
+    oldDate: String,
+    oldTime: String,
+    proposedDate: String,
+    proposedTime: String,
+    customerDecision: {
+      type: String,
+      enum: ['pending', 'accepted', 'rejected'],
+      default: 'pending'
+    },
+    barberDecision: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected'],
+      default: 'pending'
+    },
+    requestedBy: {
+      type: String,
+      default: 'barber'
+    },
+    requestedAt: Date,
+    customerRespondedAt: Date,
+    barberRespondedAt: Date
+  },
   createdAt: {
     type: Date,
     default: Date.now
