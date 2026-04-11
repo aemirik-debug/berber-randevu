@@ -57,6 +57,15 @@ const slotSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  isHidden: {
+    type: Boolean,
+    default: false
+  },
+  hiddenAt: Date,
+  hiddenBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Barber'
+  },
   payment: {
     isPaid: { type: Boolean, default: false },
     amount: { type: Number, default: 0 }

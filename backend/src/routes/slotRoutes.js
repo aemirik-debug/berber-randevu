@@ -481,7 +481,7 @@ router.get('/my-slots', auth, checkFeature('calendarBooking'), async (req, res) 
   try {
     const { date, startDate, endDate } = req.query;
     
-    let query = { barber: req.barberId };
+    let query = { barber: req.barberId, isHidden: { $ne: true } };
     
     if (date) {
       query.date = date;
@@ -500,13 +500,14 @@ router.get('/my-slots', auth, checkFeature('calendarBooking'), async (req, res) 
     
     // Barber bilgisini al (service bilgileri için)
     const barber = await Barber.findById(req.barberId);
+    const barberServices = Array.isArray(barber?.services) ? barber.services : [];
     
     const enrichedSlots = slots.map(slot => {
       let serviceInfo = null;
       
       // Eğer slot.service varsa (manuel oluşturulan randevular için)
-      if (slot.service) {
-        const service = barber.services.id(slot.service);
+      if (slot.service && barberServices.length > 0) {
+        const service = barberServices.id(slot.service);
         if (service) {
           serviceInfo = {
             _id: service._id,
@@ -738,6 +739,72 @@ router.patch('/:slotId/status', auth, checkFeature('calendarBooking'), async (re
     
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Manuel oluşturulan randevuyu gizle
+router.delete('/:slotId', auth, checkFeature('calendarBooking'), async (req, res) => {
+  try {
+    const slot = await Slot.findOne({ _id: req.params.slotId, barber: req.barberId });
+
+    if (!slot) {
+      return res.status(404).json({ success: false, error: 'Randevu bulunamadı' });
+    }
+
+    if (!slot.isManualAppointment) {
+      return res.status(403).json({ success: false, error: 'Sadece manuel oluşturduğunuz randevuları gizleyebilirsiniz' });
+    }
+
+    if (slot.isHistoricalRecord) {
+      return res.status(400).json({ success: false, error: 'Tarihi kayıtlar gizlenemez' });
+    }
+
+    if (isPastDateTime(slot.date, slot.time)) {
+      return res.status(400).json({ success: false, error: 'Geçmiş randevular gizlenemez' });
+    }
+
+    slot.isHidden = true;
+    slot.hiddenAt = new Date();
+    slot.hiddenBy = req.barberId;
+    await slot.save();
+
+    return res.json({
+      success: true,
+      message: 'Randevu gizlendi',
+      slot,
+    });
+  } catch (error) {
+    console.error('❌ Slot gizleme hatası:', error.message, error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Gizlenen manuel randevuyu geri getir
+router.patch('/:slotId/restore', auth, checkFeature('calendarBooking'), async (req, res) => {
+  try {
+    const slot = await Slot.findOne({ _id: req.params.slotId, barber: req.barberId });
+
+    if (!slot) {
+      return res.status(404).json({ success: false, error: 'Randevu bulunamadı' });
+    }
+
+    if (!slot.isManualAppointment) {
+      return res.status(403).json({ success: false, error: 'Sadece manuel oluşturduğunuz randevuları geri alabilirsiniz' });
+    }
+
+    slot.isHidden = false;
+    slot.hiddenAt = null;
+    slot.hiddenBy = null;
+    await slot.save();
+
+    return res.json({
+      success: true,
+      message: 'Randevu geri alındı',
+      slot,
+    });
+  } catch (error) {
+    console.error('❌ Slot geri alma hatası:', error.message, error);
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 // Müşteri slot rezervasyonu (auth'suz, herkes kullanabilir)

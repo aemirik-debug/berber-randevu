@@ -131,6 +131,8 @@ function BarberHome() {
   const [nowTick, setNowTick] = useState(Date.now());
   const [confirmAction, setConfirmAction] = useState(null);
   const [summaryModal, setSummaryModal] = useState(null);
+  const [recentlyDeletedSlot, setRecentlyDeletedSlot] = useState(null);
+  const [mobileHomeTab, setMobileHomeTab] = useState('today');
   const todayIso = useMemo(() => toLocalDateInput(new Date()), []);
   const currentCalendarDate = useMemo(() => new Date(nowTick), [nowTick]);
   const currentYear = currentCalendarDate.getFullYear();
@@ -158,7 +160,9 @@ function BarberHome() {
   const visibleMySlots = useMemo(() => {
     return mySlots.map((slot) => ({
       ...slot,
-      isPastSlot: slotDate === todayIso && String(slot.time || '') <= nowTimeHHmm,
+      isPastSlot:
+        String(slot.date || '') < todayIso
+        || (String(slot.date || '') === todayIso && String(slot.time || '') <= nowTimeHHmm),
     }));
   }, [mySlots, slotDate, todayIso, nowTimeHHmm]);
 
@@ -570,6 +574,7 @@ function BarberHome() {
   }, [dashboardBookedSlots]);
   const openSummaryModal = (type) => setSummaryModal({ type });
   const closeSummaryModal = () => setSummaryModal(null);
+  const mobileSectionClass = (tabKey) => `barber-mobile-section ${mobileHomeTab === tabKey ? '' : 'is-mobile-hidden'}`;
   const profileStatusCards = useMemo(() => {
     const emailFilled = String(barber?.email || '').trim();
     return [
@@ -756,11 +761,41 @@ function BarberHome() {
   const handleDeleteSlot = async (slot) => {
     try {
       setPendingSlotActionId(slot._id);
+      if (!slot?.isManualAppointment) {
+        throw new Error('Sadece manuel oluşturduğunuz randevuları gizleyebilirsiniz');
+      }
+      if (slot?.isHistoricalRecord) {
+        throw new Error('Tarihi kayıtlar gizlenemez');
+      }
       await api.delete(`/slots/${slot._id}`);
+      setRecentlyDeletedSlot({
+        _id: slot._id,
+        customerName: slot.customerName || slot.customer?.name || 'Müşteri',
+        date: slot.date,
+        time: slot.time,
+      });
       await loadSlotsForDate(slotDate);
-      setActionMessage({ text: 'Saat silindi.', type: 'success' });
+      setActionMessage({ text: 'Randevu gizlendi. Geri alabilirsiniz.', type: 'success' });
     } catch (err) {
       setActionMessage({ text: err.response?.data?.error || 'Saat silinemedi', type: 'error' });
+    } finally {
+      setPendingSlotActionId('');
+    }
+  };
+
+  const handleUndoDeleteSlot = async () => {
+    if (!recentlyDeletedSlot?._id) {
+      return;
+    }
+
+    try {
+      setPendingSlotActionId(recentlyDeletedSlot._id);
+      await api.patch(`/slots/${recentlyDeletedSlot._id}/restore`);
+      await loadSlotsForDate(slotDate);
+      setActionMessage({ text: 'Randevu geri alındı.', type: 'success' });
+      setRecentlyDeletedSlot(null);
+    } catch (err) {
+      setActionMessage({ text: err.response?.data?.error || 'Randevu geri alınamadı', type: 'error' });
     } finally {
       setPendingSlotActionId('');
     }
@@ -1005,7 +1040,14 @@ function BarberHome() {
                 </div>
               </div>
 
-              <div className="barber-home-actions-grid">
+              <div className="barber-home-mobile-tabs" role="tablist" aria-label="Mobil ana sayfa sekmeleri">
+                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'today' ? 'active' : ''}`} onClick={() => setMobileHomeTab('today')}>Bugün</button>
+                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'actions' ? 'active' : ''}`} onClick={() => setMobileHomeTab('actions')}>Aksiyon</button>
+                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'revenue' ? 'active' : ''}`} onClick={() => setMobileHomeTab('revenue')}>Gelir</button>
+                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'settings' ? 'active' : ''}`} onClick={() => setMobileHomeTab('settings')}>Ayarlar</button>
+              </div>
+
+              <div className={`barber-home-actions-strip ${mobileSectionClass('actions')}`}>
                 {quickActions.map((item) => (
                   <button key={item.key} type="button" className="barber-home-action-card" onClick={item.action}>
                     <span className="barber-home-action-icon">{item.icon}</span>
@@ -1017,7 +1059,7 @@ function BarberHome() {
                 ))}
               </div>
 
-              <div className="barber-home-panel barber-home-alert-queue-panel">
+              <div className={`barber-home-panel barber-home-alert-queue-panel barber-home-critical-panel ${mobileSectionClass('actions')}`}>
                 <div className="barber-home-panel-head">
                   <div>
                     <h4 className="barber-home-panel-title">Uyarılar</h4>
@@ -1157,7 +1199,7 @@ function BarberHome() {
                 )}
               </div>
 
-              <div className="barber-home-panel barber-home-alert-queue-panel">
+              <div className={`barber-home-panel barber-home-alert-queue-panel barber-home-confirmed-panel ${mobileSectionClass('today')}`}>
                 <div className="barber-home-panel-head">
                   <div>
                     <h4 className="barber-home-panel-title">Onaylanan Randevular</h4>
@@ -1207,7 +1249,7 @@ function BarberHome() {
                 )}
               </div>
 
-              <div className="stat-grid barber-home-stats-grid">
+              <div className={`stat-grid barber-home-stats-grid ${mobileSectionClass('today')}`}>
                 <button type="button" className="stat-card barber-home-stat-card-button" onClick={() => openSummaryModal('confirmed')}>
                   <div className="stat-card-label">✅ Onaylı Randevu</div>
                   <div className="stat-card-value">{dashboardAppointmentStats.confirmed}</div>
@@ -1222,7 +1264,7 @@ function BarberHome() {
                 </button>
               </div>
 
-              <div className="barber-home-two-column">
+              <div className={`barber-home-two-column barber-home-lower-grid ${mobileSectionClass('settings')}`}>
                 <div className="barber-home-panel">
                   <div className="barber-home-panel-head">
                     <div>
@@ -1248,7 +1290,7 @@ function BarberHome() {
                   </div>
                 </div>
 
-                <div className="barber-home-panel">
+                <div className="barber-home-panel barber-home-monthly-panel">
                   <div className="barber-home-panel-head">
                     <div>
                       <h4 className="barber-home-panel-title">Business Uyarıları</h4>
@@ -1277,7 +1319,7 @@ function BarberHome() {
                 </div>
               </div>
 
-              <div className="barber-home-two-column">
+              <div className={`barber-home-two-column ${mobileSectionClass('revenue')}`}>
                 <div className="barber-home-panel">
                   <div className="barber-home-panel-head">
                     <div>
@@ -1338,7 +1380,7 @@ function BarberHome() {
                 </div>
               </div>
 
-              <div className="info-card mt-4">
+              <div className={`info-card mt-4 ${mobileSectionClass('settings')}`}>
                 <div className="d-flex flex-wrap justify-content-between align-items-center gap-2">
                   <div>
                     <h4 className="mb-1">Üyelik Bilgileri</h4>
@@ -1516,7 +1558,8 @@ function BarberHome() {
                       const hasAppointment = Boolean(s.customerName || s.customer?.name);
                       const showPastOnly = s.isPastSlot && statusLc === 'available' && !hasAppointment;
                       const hideActions = s.isPastSlot;
-                      const canEditManual = !s.isPastSlot && Boolean(s.isManualAppointment);
+                      const canEditManual = !s.isPastSlot && Boolean(s.isManualAppointment) && !s.isHistoricalRecord;
+                      const canDeleteManual = !s.isPastSlot && Boolean(s.isManualAppointment) && !s.isHistoricalRecord;
                       const canManageAvailability = !s.isPastSlot && ['available', 'blocked'].includes(statusLc);
 
                       return (
@@ -1584,13 +1627,13 @@ function BarberHome() {
                           >
                             🚫
                           </button>}
-                          {canManageAvailability && <button title="Sil" className="barber-slot-action-btn barber-slot-action-delete" onClick={() => {
+                          {canDeleteManual && <button title="Sil" className="barber-slot-action-btn barber-slot-action-delete" onClick={() => {
                             setConfirmAction({
                               kind: 'delete-slot',
                               slot: s,
-                              title: 'Saati Sil',
-                              message: 'Bu saati silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.',
-                              confirmText: 'Sil',
+                              title: 'Randevuyu Gizle',
+                              message: 'Bu manuel randevuyu gizlemek istediğinizden emin misiniz? Geri alabilirsiniz, ancak sayfa yenilenince uyarı kalkar.',
+                              confirmText: 'Gizle',
                               variant: 'danger',
                             });
                           }}>
@@ -1674,6 +1717,28 @@ function BarberHome() {
           <strong className="me-1">{actionMessage.type === 'success' ? 'Başarılı!' : 'Hata!'}</strong>
           {actionMessage.text}
           <button type="button" className="btn-close" onClick={() => setActionMessage({ text: '', type: 'success' })}></button>
+        </div>
+      )}
+
+      {recentlyDeletedSlot && (
+        <div
+          className="alert alert-info alert-dismissible fade show"
+          role="alert"
+          style={{
+            position: 'fixed',
+            top: '140px',
+            right: '20px',
+            zIndex: 1050,
+            maxWidth: '420px',
+            boxShadow: '0 12px 28px rgba(44, 62, 80, 0.15)',
+          }}
+        >
+          <strong className="me-1">Gizlenen randevu:</strong>
+          {recentlyDeletedSlot.customerName} {recentlyDeletedSlot.date} {recentlyDeletedSlot.time}
+          <button type="button" className="btn btn-sm btn-outline-primary ms-3" onClick={handleUndoDeleteSlot}>
+            Geri Al
+          </button>
+          <button type="button" className="btn-close ms-2" onClick={() => setRecentlyDeletedSlot(null)}></button>
         </div>
       )}
 

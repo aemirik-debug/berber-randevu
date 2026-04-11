@@ -215,6 +215,16 @@
   padding: 1.5rem;
 }
 
+.barber-shell .barber-home-actions-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.barber-shell .barber-home-mobile-tabs {
+  display: none;
+}
+
 .barber-shell .page-title {
   font-family: 'Playfair Display', serif;
   color: var(--cbk-charcoal);
@@ -260,7 +270,12 @@
   }
 
   .barber-shell .topbar {
-    padding: 0.75rem 0.55rem;
+    position: sticky;
+    top: 0;
+    z-index: 1030;
+    padding: 0.7rem 0.75rem;
+    backdrop-filter: blur(14px);
+    background: rgba(255, 255, 255, 0.92);
   }
 
   .barber-shell .topbar-logo {
@@ -278,11 +293,136 @@
   }
 
   .barber-shell .content {
-    padding: 0;
+    padding: 0.75rem 0.75rem 1rem;
   }
 
   .barber-shell .page-title {
     font-size: 1.35rem;
+  }
+
+  .barber-shell .barber-home-dashboard {
+    gap: 0.85rem;
+  }
+
+  .barber-shell .barber-home-hero {
+    gap: 0.85rem;
+    padding: 0.9rem;
+  }
+
+  .barber-shell .barber-home-hero-copy {
+    order: 1;
+  }
+
+  .barber-shell .barber-home-hero-stat {
+    order: 0;
+    padding: 0.85rem;
+  }
+
+  .barber-shell .barber-home-hero-stat-value {
+    font-size: 1.65rem;
+  }
+
+  .barber-shell .barber-home-mobile-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.42rem;
+    padding: 0.35rem;
+    border: 1px solid rgba(52, 152, 219, 0.14);
+    border-radius: 0.9rem;
+    background: rgba(255, 255, 255, 0.92);
+    position: sticky;
+    top: 58px;
+    z-index: 1021;
+    backdrop-filter: blur(8px);
+  }
+
+  .barber-shell .barber-home-mobile-tab {
+    border: 0;
+    background: transparent;
+    border-radius: 0.62rem;
+    padding: 0.5rem 0.24rem;
+    color: rgba(44, 62, 80, 0.74);
+    font-size: 0.73rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .barber-shell .barber-home-mobile-tab.active {
+    background: linear-gradient(135deg, rgba(52, 152, 219, 0.18), rgba(41, 128, 185, 0.08));
+    color: var(--cbk-blue);
+    box-shadow: inset 0 0 0 1px rgba(52, 152, 219, 0.18);
+  }
+
+  .barber-shell .barber-mobile-section.is-mobile-hidden {
+    display: none !important;
+  }
+
+  .barber-shell .barber-home-actions-strip {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
+  }
+
+  .barber-shell .barber-home-action-card {
+    min-height: 72px;
+    padding: 0.72rem;
+  }
+
+  .barber-shell .barber-home-action-body strong {
+    font-size: 0.84rem;
+  }
+
+  .barber-shell .barber-home-action-body small {
+    display: none;
+  }
+
+  .barber-shell .barber-home-alert-queue-panel,
+  .barber-shell .barber-home-confirmed-panel,
+  .barber-shell .barber-home-monthly-panel,
+  .barber-shell .barber-home-critical-panel {
+    padding: 0.85rem;
+  }
+
+  .barber-shell .barber-home-panel-head {
+    margin-bottom: 0.7rem;
+  }
+
+  .barber-shell .barber-home-panel-title {
+    font-size: 0.98rem;
+  }
+
+  .barber-shell .barber-home-panel-subtitle {
+    font-size: 0.74rem;
+  }
+
+  .barber-shell .barber-home-stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .barber-shell .barber-home-stat-card-button {
+    min-height: 94px;
+  }
+
+  .barber-shell .barber-home-two-column.barber-home-lower-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .barber-shell .barber-home-monthly-panel .barber-home-revenue-list {
+    max-height: 320px;
+    overflow: auto;
+    padding-right: 0.2rem;
+  }
+
+  .barber-shell .barber-home-confirmed-panel .barber-home-alert-queue-list {
+    max-height: 290px;
+    overflow: auto;
+    padding-right: 0.2rem;
+  }
+
+  .barber-shell .barber-home-critical-panel .barber-home-alert-queue-list {
+    max-height: 250px;
+    overflow: auto;
+    padding-right: 0.2rem;
   }
 
   .barber-shell.show-mobile-menu .mobile-menu-overlay {
