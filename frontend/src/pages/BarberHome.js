@@ -11,11 +11,93 @@ import { connectSocket, disconnectSocket } from '../services/socket';
 import './BarberShellLayout.css';
 
 const WEEK_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+const MONTH_NAMES_TR = [
+  'Ocak',
+  'Şubat',
+  'Mart',
+  'Nisan',
+  'Mayıs',
+  'Haziran',
+  'Temmuz',
+  'Ağustos',
+  'Eylül',
+  'Ekim',
+  'Kasım',
+  'Aralık',
+];
 const toLocalDateInput = (date) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+};
+
+const toSlotRevenueAmount = (slot) => {
+  return Number(
+    slot?.manualPrice
+    ?? slot?.payment?.amount
+    ?? slot?.service?.price
+    ?? slot?.customer?.totalPrice
+    ?? 0
+  ) || 0;
+};
+
+const parseIsoDateParts = (dateStr) => {
+  const [year, month, day] = String(dateStr || '').split('-').map((part) => Number(part));
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return { year, monthIndex: month - 1, day };
+};
+
+const formatMonthRange = (year, monthIndex) => {
+  const startDate = new Date(year, monthIndex, 1);
+  const endDate = new Date(year, monthIndex + 1, 0);
+  return `${toLocalDateInput(startDate).split('-').reverse().join('.')} - ${toLocalDateInput(endDate).split('-').reverse().join('.')}`;
+};
+
+const getCurrentYearBounds = (year) => ({
+  startDate: `${year}-01-01`,
+  endDate: `${year}-12-31`,
+});
+
+const splitCustomerFullName = (slot) => {
+  const rawName = String(slot?.customer?.name || slot?.customerName || '').trim();
+  if (!rawName) {
+    return { firstName: 'İsimsiz', lastName: 'Müşteri', fullName: 'İsimsiz Müşteri' };
+  }
+
+  const parts = rawName.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: '-', fullName: parts[0] };
+  }
+
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(' '),
+    fullName: rawName,
+  };
+};
+
+const getSlotServiceName = (slot) => slot?.service?.name || slot?.customer?.service || 'Hizmet seçilmedi';
+
+const getSlotStatusLabel = (status) => {
+  const statusLc = String(status || '').toLowerCase();
+  if (statusLc === 'confirmed' || statusLc === 'completed') return 'Onaylı';
+  if (statusLc === 'cancelled' || statusLc === 'rejected' || statusLc === 'reddedildi' || statusLc === 'rejected_by_barber') return 'Reddedildi';
+  if (statusLc === 'booked') return 'Bekliyor';
+  if (statusLc === 'reschedule_pending_customer') return 'Müşteri Onayı';
+  if (statusLc === 'reschedule_pending_barber') return 'Son Onay';
+  return 'Bilinmiyor';
+};
+
+const getSlotStatusTone = (status) => {
+  const statusLc = String(status || '').toLowerCase();
+  if (statusLc === 'confirmed' || statusLc === 'completed') return 'success';
+  if (statusLc === 'cancelled' || statusLc === 'rejected' || statusLc === 'reddedildi' || statusLc === 'rejected_by_barber') return 'danger';
+  if (statusLc === 'booked' || statusLc === 'reschedule_pending_customer' || statusLc === 'reschedule_pending_barber') return 'warning';
+  return 'secondary';
 };
 
 function BarberHome() {
@@ -33,6 +115,7 @@ function BarberHome() {
   const [dashboardSlots, setDashboardSlots] = useState([]);
   const [dashboardPendingSlots, setDashboardPendingSlots] = useState([]);
   const [dashboardConfirmedSlots, setDashboardConfirmedSlots] = useState([]);
+  const [dashboardRevenueSlots, setDashboardRevenueSlots] = useState([]);
   const [slotDate, setSlotDate] = useState(toLocalDateInput(new Date()));
   const [showCreateManualSlot, setShowCreateManualSlot] = useState(false);
   const [selectedSlotForManual, setSelectedSlotForManual] = useState(null);
@@ -47,7 +130,11 @@ function BarberHome() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [nowTick, setNowTick] = useState(Date.now());
   const [confirmAction, setConfirmAction] = useState(null);
+  const [summaryModal, setSummaryModal] = useState(null);
   const todayIso = useMemo(() => toLocalDateInput(new Date()), []);
+  const currentCalendarDate = useMemo(() => new Date(nowTick), [nowTick]);
+  const currentYear = currentCalendarDate.getFullYear();
+  const currentMonthIndex = currentCalendarDate.getMonth();
   const formatDateDayMonthYear = (dateStr) => {
     const [year, month, day] = String(dateStr || '').split('-');
     if (!year || !month || !day) {
@@ -138,6 +225,24 @@ function BarberHome() {
     }
   };
 
+  const loadDashboardRevenueSlots = async () => {
+    try {
+      const runtimeYear = new Date().getFullYear();
+      const { startDate, endDate } = getCurrentYearBounds(runtimeYear);
+      const slotsRes = await api.get('/slots/my-slots', {
+        params: {
+          startDate,
+          endDate,
+        },
+      });
+
+      setDashboardRevenueSlots(slotsRes.data.data || []);
+    } catch (slotErr) {
+      console.error('Aylık ciro verileri yüklenemedi', slotErr);
+      setDashboardRevenueSlots([]);
+    }
+  };
+
   // Message cleanup
   useEffect(() => {
     if (serviceMessage.text) {
@@ -181,6 +286,7 @@ function BarberHome() {
         await Promise.all([
           loadDashboardSlotsForToday(),
           loadDashboardPendingSlots(),
+          loadDashboardRevenueSlots(),
         ]);
       }
       if (payload?.message) {
@@ -202,6 +308,7 @@ function BarberHome() {
         await Promise.all([
           loadDashboardSlotsForToday(),
           loadDashboardPendingSlots(),
+          loadDashboardRevenueSlots(),
         ]);
       } catch (err) {
         console.error('Veri yükleme hatası', err);
@@ -251,6 +358,7 @@ function BarberHome() {
       await Promise.all([
         loadDashboardSlotsForToday(),
         loadDashboardPendingSlots(),
+        loadDashboardRevenueSlots(),
       ]);
     };
 
@@ -329,22 +437,122 @@ function BarberHome() {
     };
   }, [dashboardSlots]);
   const dashboardRevenueEstimate = useMemo(() => {
-    return dashboardSlots.reduce((sum, slot) => {
-      if (String(slot.status || '').toLowerCase() !== 'confirmed') {
+    const revenueStatuses = new Set(['confirmed', 'completed']);
+    return dashboardRevenueSlots.reduce((sum, slot) => {
+      const slotDateParts = parseIsoDateParts(slot.date);
+      if (!slotDateParts || slotDateParts.year !== currentYear || slotDateParts.monthIndex !== currentMonthIndex) {
         return sum;
       }
 
-      const slotRevenue = Number(
-        slot.manualPrice
-        ?? slot.payment?.amount
-        ?? slot.service?.price
-        ?? slot.customer?.totalPrice
-        ?? 0
-      ) || 0;
+      if (!revenueStatuses.has(String(slot.status || '').toLowerCase())) {
+        return sum;
+      }
 
-      return sum + slotRevenue;
+      return sum + toSlotRevenueAmount(slot);
     }, 0);
-  }, [dashboardSlots]);
+  }, [dashboardRevenueSlots, currentMonthIndex, currentYear]);
+  const monthlyRevenueList = useMemo(() => {
+    const revenueStatuses = new Set(['confirmed', 'completed']);
+    const monthMap = Array.from({ length: 12 }, (_, monthIndex) => ({
+      key: `${currentYear}-${String(monthIndex + 1).padStart(2, '0')}`,
+      monthIndex,
+      label: MONTH_NAMES_TR[monthIndex] || new Intl.DateTimeFormat('tr-TR', { month: 'long' }).format(new Date(currentYear, monthIndex, 1)),
+      range: formatMonthRange(currentYear, monthIndex),
+      amount: 0,
+      count: 0,
+    }));
+
+    dashboardRevenueSlots.forEach((slot) => {
+      const slotDateParts = parseIsoDateParts(slot.date);
+      if (!slotDateParts || slotDateParts.year !== currentYear) {
+        return;
+      }
+
+      if (!revenueStatuses.has(String(slot.status || '').toLowerCase())) {
+        return;
+      }
+
+      const bucket = monthMap[slotDateParts.monthIndex];
+      if (!bucket) {
+        return;
+      }
+
+      bucket.amount += toSlotRevenueAmount(slot);
+      bucket.count += 1;
+    });
+
+    return monthMap.map((bucket) => ({
+      ...bucket,
+      isCurrentMonth: bucket.monthIndex === currentMonthIndex,
+    }));
+  }, [dashboardRevenueSlots, currentMonthIndex, currentYear]);
+  const confirmedSummarySlots = useMemo(() => {
+    return dashboardRevenueSlots
+      .filter((slot) => ['confirmed', 'completed'].includes(String(slot.status || '').toLowerCase()))
+      .sort((a, b) => {
+        const dateCompare = String(a.date || '').localeCompare(String(b.date || ''));
+        if (dateCompare !== 0) {
+          return dateCompare;
+        }
+        return String(a.time || '').localeCompare(String(b.time || ''));
+      });
+  }, [dashboardRevenueSlots]);
+  const rejectedSummarySlots = useMemo(() => {
+    return dashboardRevenueSlots
+      .filter((slot) => ['cancelled', 'rejected', 'reddedildi', 'rejected_by_barber'].includes(String(slot.status || '').toLowerCase()))
+      .sort((a, b) => {
+        const dateCompare = String(a.date || '').localeCompare(String(b.date || ''));
+        if (dateCompare !== 0) {
+          return dateCompare;
+        }
+        return String(a.time || '').localeCompare(String(b.time || ''));
+      });
+  }, [dashboardRevenueSlots]);
+  const currentMonthSummarySlots = useMemo(() => {
+    return dashboardRevenueSlots
+      .filter((slot) => {
+        const slotDateParts = parseIsoDateParts(slot.date);
+        if (!slotDateParts || slotDateParts.year !== currentYear || slotDateParts.monthIndex !== currentMonthIndex) {
+          return false;
+        }
+
+        return ['confirmed', 'completed'].includes(String(slot.status || '').toLowerCase());
+      })
+      .sort((a, b) => {
+        const dateCompare = String(a.date || '').localeCompare(String(b.date || ''));
+        if (dateCompare !== 0) {
+          return dateCompare;
+        }
+        return String(a.time || '').localeCompare(String(b.time || ''));
+      });
+  }, [dashboardRevenueSlots, currentMonthIndex, currentYear]);
+  const summaryModalData = useMemo(() => {
+    if (!summaryModal) {
+      return null;
+    }
+
+    if (summaryModal.type === 'confirmed') {
+      return {
+        title: 'Onaylanan Randevular',
+        subtitle: 'Onaylanan randevuların detayları',
+        items: confirmedSummarySlots,
+      };
+    }
+
+    if (summaryModal.type === 'rejected') {
+      return {
+        title: 'Reddedilen Randevular',
+        subtitle: 'Reddedilen ve iptal edilen randevuların detayları',
+        items: rejectedSummarySlots,
+      };
+    }
+
+    return {
+      title: 'Bu Ayki Randevular',
+      subtitle: `${MONTH_NAMES_TR[currentMonthIndex]} ayı onaylanan randevuların detayları`,
+      items: currentMonthSummarySlots,
+    };
+  }, [confirmedSummarySlots, currentMonthIndex, currentMonthSummarySlots, rejectedSummarySlots, summaryModal]);
   const dashboardBookedSlots = useMemo(() => {
     return dashboardPendingSlots;
   }, [dashboardPendingSlots]);
@@ -360,6 +568,8 @@ function BarberHome() {
       return statusLc === 'booked' || statusLc === 'reschedule_pending_barber';
     }).length;
   }, [dashboardBookedSlots]);
+  const openSummaryModal = (type) => setSummaryModal({ type });
+  const closeSummaryModal = () => setSummaryModal(null);
   const profileStatusCards = useMemo(() => {
     const emailFilled = String(barber?.email || '').trim();
     return [
@@ -779,7 +989,7 @@ function BarberHome() {
                   <div className="barber-home-kicker">İşletme Kontrol Merkezi</div>
                   <h1 className="page-title barber-home-title">Hoş geldiniz, {barber?.salonName || 'Berber'}</h1>
                   <p className="page-subtitle barber-home-subtitle">
-                    {barber.subscription?.plan?.toUpperCase()} paketiniz aktif. Bugünün doluluğunu, hızlı aksiyonları ve profil eksiklerini tek ekranda görün.
+                    {barber.subscription?.plan?.toUpperCase()} paketiniz aktif. Bu ayın doluluğunu, hızlı aksiyonları ve profil eksiklerini tek ekranda görün.
                   </p>
                   <div className="barber-home-meta">
                     <span className="barber-home-pill">Plan: {barber.subscription?.plan || 'basic'}</span>
@@ -789,9 +999,9 @@ function BarberHome() {
                 </div>
 
                 <div className="barber-home-hero-stat">
-                  <div className="barber-home-hero-stat-label">Bugünkü onaylı ciro</div>
+                  <div className="barber-home-hero-stat-label">Bu ay onaylı ciro</div>
                   <div className="barber-home-hero-stat-value">₺{dashboardRevenueEstimate.toLocaleString('tr-TR')}</div>
-                  <div className="barber-home-hero-stat-subtitle">Onaylı randevu fiyatlarının toplamı</div>
+                  <div className="barber-home-hero-stat-subtitle">{formatMonthRange(currentYear, currentMonthIndex)} arası onaylı ve tamamlanan randevular</div>
                 </div>
               </div>
 
@@ -998,18 +1208,18 @@ function BarberHome() {
               </div>
 
               <div className="stat-grid barber-home-stats-grid">
-                <div className="stat-card">
-                  <div className="stat-card-label">📅 Yeni Randevu</div>
-                  <div className="stat-card-value">{dashboardAppointmentStats.newRequests}</div>
-                </div>
-                <div className="stat-card">
+                <button type="button" className="stat-card barber-home-stat-card-button" onClick={() => openSummaryModal('confirmed')}>
                   <div className="stat-card-label">✅ Onaylı Randevu</div>
                   <div className="stat-card-value">{dashboardAppointmentStats.confirmed}</div>
-                </div>
-                <div className="stat-card">
+                </button>
+                <button type="button" className="stat-card barber-home-stat-card-button" onClick={() => openSummaryModal('rejected')}>
                   <div className="stat-card-label">⛔ Reddedilen Randevu</div>
                   <div className="stat-card-value">{dashboardAppointmentStats.cancelled}</div>
-                </div>
+                </button>
+                <button type="button" className="stat-card barber-home-stat-card-button" onClick={() => openSummaryModal('current-month')}>
+                  <div className="stat-card-label">📆 Bu Ayki Randevu</div>
+                  <div className="stat-card-value">{currentMonthSummarySlots.length}</div>
+                </button>
               </div>
 
               <div className="barber-home-two-column">
@@ -1090,7 +1300,7 @@ function BarberHome() {
                       <strong>{activeWorkingDays}</strong>
                     </div>
                     <div className="barber-home-operation-card">
-                      <span>Onaylı ciro toplamı</span>
+                      <span>Bu ay onaylı ciro</span>
                       <strong>₺{dashboardRevenueEstimate.toLocaleString('tr-TR')}</strong>
                     </div>
                   </div>
@@ -1099,38 +1309,30 @@ function BarberHome() {
                 <div className="barber-home-panel">
                   <div className="barber-home-panel-head">
                     <div>
-                      <h4 className="barber-home-panel-title">Son Aktivite</h4>
-                      <p className="barber-home-panel-subtitle">Bugün seçilen tarih için slot durumu.</p>
+                      <h4 className="barber-home-panel-title">Aylık Kazanç</h4>
+                      <p className="barber-home-panel-subtitle">Her ayın onaylı ve tamamlanan randevu toplamı.</p>
                     </div>
+                    <span className="barber-home-panel-badge success">{currentYear}</span>
                   </div>
 
-                  {dashboardSlots.length > 0 ? (
-                    <div className="barber-home-activity-list">
-                      {dashboardSlots.slice(0, 6).map((slot) => (
-                        <div key={slot._id} className="barber-home-activity-item">
+                  {monthlyRevenueList.length > 0 ? (
+                    <div className="barber-home-revenue-list">
+                      {monthlyRevenueList.map((monthItem) => (
+                        <div key={monthItem.key} className={`barber-home-revenue-item ${monthItem.isCurrentMonth ? 'current' : ''}`}>
                           <div>
-                            <strong>{slot.time}</strong>
-                            <p>{slot.customerName || slot.customer?.name || 'Müsait slot'}</p>
+                            <strong>{monthItem.label}</strong>
+                            <p>{monthItem.range}</p>
                           </div>
-                          <span className={`badge ${slot.status === 'confirmed' ? 'bg-success' : slot.status === 'available' ? 'bg-secondary' : 'bg-danger'}`}>
-                            {slot.status === 'confirmed'
-                              ? 'Onaylı'
-                              : slot.status === 'available'
-                                ? 'Müsait'
-                                : slot.status === 'booked'
-                                  ? 'Bekliyor'
-                                  : slot.status === 'reschedule_pending_customer'
-                                    ? 'Müşteri Onayı'
-                                    : slot.status === 'reschedule_pending_barber'
-                                      ? 'Son Onay'
-                                      : 'İptal'}
-                          </span>
+                          <div className="barber-home-revenue-meta">
+                            <span className="barber-home-revenue-count">{monthItem.count} işlem</span>
+                            <strong className="barber-home-revenue-amount">₺{monthItem.amount.toLocaleString('tr-TR')}</strong>
+                          </div>
                         </div>
                       ))}
                     </div>
                   ) : (
                     <div className="barber-home-empty-state">
-                      Bugün için veri yok. Takvim bölümünden slotları kontrol edebilirsiniz.
+                      Bu yıl için gelir verisi yok. Randevu onaylandıkça aylık kazanç burada görünecek.
                     </div>
                   )}
                 </div>
@@ -1487,6 +1689,54 @@ function BarberHome() {
         onConfirm={executeConfirmAction}
         onClose={closeConfirmAction}
       />
+
+      {summaryModalData && (
+        <div className="modal d-block barber-home-summary-modal" tabIndex="-1" role="dialog" aria-modal="true" onClick={closeSummaryModal}>
+          <div className="modal-dialog modal-dialog-centered modal-lg" role="document" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-content border-0 rounded-4 shadow-lg">
+              <div className="modal-header bg-white border-bottom py-3">
+                <div>
+                  <h5 className="modal-title fw-bold mb-0" style={{ color: '#2c3e50' }}>{summaryModalData.title}</h5>
+                  <small className="text-muted">{summaryModalData.subtitle}</small>
+                </div>
+                <button type="button" className="btn-close" aria-label="Kapat" onClick={closeSummaryModal} />
+              </div>
+              <div className="modal-body p-4">
+                {summaryModalData.items.length > 0 ? (
+                  <div className="barber-home-summary-list">
+                    {summaryModalData.items.map((slot) => {
+                      const customer = splitCustomerFullName(slot);
+                      const serviceName = getSlotServiceName(slot);
+                      const statusLabel = getSlotStatusLabel(slot.status);
+                      const statusTone = getSlotStatusTone(slot.status);
+                      return (
+                        <div key={slot._id} className="barber-home-summary-item">
+                          <div className="barber-home-summary-item-main">
+                            <div className="barber-home-summary-name">
+                              <strong>{customer.firstName}</strong>
+                              <span>{customer.lastName}</span>
+                            </div>
+                            <div className="barber-home-summary-meta">
+                              <span>{formatDateDayMonthYear(slot.date)} • {slot.time || '--:--'}</span>
+                              <span>{serviceName}</span>
+                            </div>
+                          </div>
+                          <div className="barber-home-summary-side">
+                            <span className={`badge bg-${statusTone}`}>{statusLabel}</span>
+                            <strong>₺{toSlotRevenueAmount(slot).toLocaleString('tr-TR')}</strong>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="barber-home-empty-state">Gösterilecek kayıt yok.</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modals */}
       <CreateManualSlotModal
