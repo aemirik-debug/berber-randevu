@@ -3,8 +3,8 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import CustomerHome from './pages/CustomerHome';
 import BarberLogin from './pages/BarberLogin';
 import BarberRegister from './pages/BarberRegister';
-import BarberDashboard from './pages/BarberDashboard';
 import BarberHome from './pages/BarberHome';
+import PortalEntry from './pages/PortalEntry';
 import CustomerAuth from './components/CustomerAuth';
 import BookingPage from './pages/BookingPage';
 import 'bootstrap/dist/css/bootstrap.min.css';
@@ -38,7 +38,10 @@ function App() {
       <div className="App">
         <Routes>
           {/* Default olarak giriş ekranına yönlendir */}
-          <Route path="/" element={<Navigate to="/customer/auth" />} />
+          <Route path="/" element={<Navigate to="/giris" />} />
+
+          {/* Rol bazli karsilama ve yonlendirme */}
+          <Route path="/giris" element={<PortalEntry />} />
 
           {/* Müşteri giriş/kayıt */}
           <Route path="/customer/auth" element={<CustomerAuth />} />
