@@ -272,6 +272,7 @@ function ShopSettings() {
               </form>
             </div>
           </div>
+
         </div>
 
         {/* Sağ Sidebar */}

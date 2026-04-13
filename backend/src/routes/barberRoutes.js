@@ -17,8 +17,32 @@ function enrichBarbersWithReviewStats(barbers) {
       ? [...reviews].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0]
       : null;
 
+    const safeMasters = Array.isArray(barber.masters)
+      ? barber.masters
+          .filter((master) => master && master.isActive !== false)
+          .map((master) => ({
+            _id: master._id,
+            name: master.name,
+            specialty: master.specialty || '',
+            isActive: master.isActive !== false,
+          }))
+      : [];
+
     return {
-      ...barber,
+      _id: barber._id,
+      barberType: barber.barberType,
+      salonName: barber.salonName,
+      name: barber.name,
+      phone: barber.phone,
+      email: barber.email,
+      address: barber.address,
+      city: barber.city,
+      district: barber.district,
+      workingHours: barber.workingHours || null,
+      services: Array.isArray(barber.services) ? barber.services : [],
+      status: barber.status,
+      logoUrl: barber.logoUrl,
+      masters: safeMasters,
       reviewCount,
       avgRating,
       latestReview: latestReview
@@ -49,6 +73,7 @@ function buildReviewStats(reviewsInput) {
 // Public routes
 router.post('/register', controller.register);
 router.post('/login', controller.login);
+router.post('/master/login', controller.masterLogin);
 router.get('/nearby', controller.getNearby);
 router.get('/', async (req, res) => {
   try {
@@ -94,6 +119,7 @@ router.post('/:barberId/reviews', authMiddleware, async (req, res) => {
     }
 
     const now = new Date();
+    const targetBarberId = String(barber._id);
     const barberNameLc = (barber.name || '').toLowerCase();
     const salonNameLc = (barber.salonName || '').toLowerCase();
     const hasPastService = (customer.appointments || []).some((app) => {
@@ -110,9 +136,16 @@ router.post('/:barberId/reviews', authMiddleware, async (req, res) => {
         return false;
       }
 
+      const appBarberId = String(app?.barberId || '').trim();
+      if (appBarberId && appBarberId === targetBarberId) {
+        return true;
+      }
+
       const appBarberNameLc = (app?.barberName || '').toLowerCase();
+      const appSalonNameLc = (app?.barberSalonName || '').toLowerCase();
       return (barberNameLc && appBarberNameLc.includes(barberNameLc))
-        || (salonNameLc && appBarberNameLc.includes(salonNameLc));
+        || (salonNameLc && appBarberNameLc.includes(salonNameLc))
+        || (salonNameLc && appSalonNameLc.includes(salonNameLc));
     });
 
     if (!hasPastService) {
@@ -129,27 +162,43 @@ router.post('/:barberId/reviews', authMiddleware, async (req, res) => {
     }
 
     const customerName = [customer.name, customer.surname].filter(Boolean).join(' ') || 'Müşteri';
-    const existingIndex = (barber.reviews || []).findIndex((item) => item.customerId === String(req.customerId));
-    if (existingIndex >= 0) {
-      barber.reviews[existingIndex].rating = rating;
-      barber.reviews[existingIndex].comment = comment;
-      barber.reviews[existingIndex].updatedAt = new Date();
+    const nowTs = new Date();
+    const customerIdStr = String(req.customerId);
+    const hasExistingReview = (barber.reviews || []).some((item) => item.customerId === customerIdStr);
+
+    if (hasExistingReview) {
+      await Barber.updateOne(
+        { _id: barber._id, 'reviews.customerId': customerIdStr },
+        {
+          $set: {
+            'reviews.$.rating': rating,
+            'reviews.$.comment': comment,
+            'reviews.$.updatedAt': nowTs,
+          },
+        }
+      );
     } else {
-      barber.reviews.push({
-        customerId: String(req.customerId),
-        customerName,
-        rating,
-        comment,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
+      await Barber.updateOne(
+        { _id: barber._id },
+        {
+          $push: {
+            reviews: {
+              customerId: customerIdStr,
+              customerName,
+              rating,
+              comment,
+              createdAt: nowTs,
+              updatedAt: nowTs,
+            },
+          },
+        }
+      );
     }
 
-    await barber.save();
-
-    const reviews = barber.reviews || [];
+    const refreshedBarber = await Barber.findById(barber._id).select('reviews');
+    const reviews = refreshedBarber?.reviews || [];
     const { reviewCount, avgRating, latestReview } = buildReviewStats(reviews);
-    const updatedReview = reviews.find((item) => item.customerId === String(req.customerId)) || null;
+    const updatedReview = reviews.find((item) => item.customerId === customerIdStr) || null;
 
     res.json({
       message: 'Yorum kaydedildi',
@@ -159,7 +208,8 @@ router.post('/:barberId/reviews', authMiddleware, async (req, res) => {
       updatedReview,
     });
   } catch (err) {
-    res.status(400).json({ message: err.message });
+    console.error('Review create error:', err);
+    res.status(400).json({ message: err.message || 'Yorum kaydedilirken hata oluştu' });
   }
 });
 
@@ -190,10 +240,13 @@ router.delete('/:barberId/reviews/me', authMiddleware, async (req, res) => {
       return res.status(403).json({ message: 'Yorumlar sadece ilk 24 saat içinde silinebilir' });
     }
 
-    barber.reviews.splice(myReviewIndex, 1);
-    await barber.save();
+    await Barber.updateOne(
+      { _id: barber._id },
+      { $pull: { reviews: { customerId: String(req.customerId) } } }
+    );
 
-    const { reviewCount, avgRating, latestReview } = buildReviewStats(barber.reviews || []);
+    const refreshedBarber = await Barber.findById(barber._id).select('reviews');
+    const { reviewCount, avgRating, latestReview } = buildReviewStats(refreshedBarber?.reviews || []);
     res.json({ message: 'Yorum silindi', reviewCount, avgRating, latestReview });
   } catch (err) {
     res.status(400).json({ message: err.message });

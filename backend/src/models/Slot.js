@@ -22,6 +22,7 @@ const slotSchema = new mongoose.Schema({
       'blocked',
       'home-service',
       'confirmed',
+      'completed',
       'cancelled',
       'reschedule_pending_customer',
       'reschedule_pending_barber'
@@ -39,6 +40,11 @@ const slotSchema = new mongoose.Schema({
     address: String,        // Yerinde hizmet için
     distance: Number,       // KM cinsinden
     totalPrice: Number      // Hesaplanan toplam fiyat
+  },
+  assignedMaster: {
+    masterId: String,
+    name: String,
+    username: String,
   },
   // Berber tarafından manuel oluşturulan randevu bilgileri
   service: {
@@ -65,6 +71,21 @@ const slotSchema = new mongoose.Schema({
   hiddenBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Barber'
+  },
+  hiddenSnapshot: {
+    status: String,
+    customer: mongoose.Schema.Types.Mixed,
+    assignedMaster: mongoose.Schema.Types.Mixed,
+    service: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Service'
+    },
+    manualPrice: Number,
+    payment: mongoose.Schema.Types.Mixed,
+    cancelReason: String,
+    isManualAppointment: Boolean,
+    isHistoricalRecord: Boolean,
+    rescheduleApproval: mongoose.Schema.Types.Mixed
   },
   payment: {
     isPaid: { type: Boolean, default: false },
@@ -113,8 +134,9 @@ const slotSchema = new mongoose.Schema({
   }
 });
 
-// Berber + Tarih + Saat kombinasyonu benzersiz olsun
-slotSchema.index({ barber: 1, date: 1, time: 1 }, { unique: true });
+// Berber + Tarih + Saat + Usta kombinasyonu benzersiz olsun.
+// Boylece ayni saatte farkli ustalara slot acilabilir.
+slotSchema.index({ barber: 1, date: 1, time: 1, 'assignedMaster.masterId': 1 }, { unique: true });
 slotSchema.index({ barber: 1, date: 1 });
 
 module.exports = mongoose.model('Slot', slotSchema);

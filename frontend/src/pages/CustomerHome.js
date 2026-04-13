@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import 'bootstrap/dist/css/bootstrap.min.css';
+import { Tooltip } from 'bootstrap';
 import { connectSocket } from '../services/socket';
 import BookingPage from './BookingPage';
 import './CustomerHomeTheme.css';
@@ -38,6 +39,7 @@ function CustomerHome() {
   const [openReviewBarberId, setOpenReviewBarberId] = useState('');
   const [reviewDrafts, setReviewDrafts] = useState({});
   const [submittingReviewBarberId, setSubmittingReviewBarberId] = useState('');
+  const [reviewFeedbackByBarber, setReviewFeedbackByBarber] = useState({});
   const [sendingReminderAppointmentId, setSendingReminderAppointmentId] = useState('');
   const [cancellingAppointmentId, setCancellingAppointmentId] = useState('');
   const [editingAppointmentId, setEditingAppointmentId] = useState('');
@@ -49,6 +51,7 @@ function CustomerHome() {
   const [respondingRescheduleAppointmentId, setRespondingRescheduleAppointmentId] = useState('');
   const [activeBarberSlideIndex, setActiveBarberSlideIndex] = useState(0);
   const [activePastSlideIndex, setActivePastSlideIndex] = useState(0);
+  const [bookingPrefill, setBookingPrefill] = useState(null);
   const headerMenuRef = useRef(null);
   const barberScrollRef = useRef(null);
   const barberCardRefs = useRef([]);
@@ -193,6 +196,9 @@ function CustomerHome() {
     if (statusLc === 'confirmed') {
       return { tone: 'approved', icon: '✅', label: 'Onaylandı' };
     }
+    if (statusLc === 'completed' || statusLc === 'tamamlandı') {
+      return { tone: 'approved', icon: '✅', label: 'Tamamlandı' };
+    }
     if (statusLc === 'cancelled' || statusLc === 'reddedildi') {
       const reasonLc = String(appointment?.cancelReason || '').toLowerCase();
       const label = reasonLc.includes('müşteri')
@@ -245,6 +251,58 @@ function CustomerHome() {
     }
 
     return String(appointment?.rescheduleApproval?.phase || '') === 'awaiting_customer';
+  };
+
+  const getAssignedMasterName = (appointment) => {
+    const raw = appointment?.assignedMaster;
+    if (raw && typeof raw === 'object') {
+      const resolved = String(raw.name || raw.username || raw.fullName || '').trim();
+      return resolved;
+    }
+    const fallback = String(appointment?.assignedMasterName || appointment?.masterName || '').trim();
+    if (fallback) {
+      return fallback;
+    }
+    return '';
+  };
+
+  const getAppointmentServicePrice = (appointment) => {
+    const candidates = [
+      appointment?.service?.price,
+      appointment?.servicePrice,
+      appointment?.price,
+      appointment?.payment?.amount,
+    ];
+
+    for (const value of candidates) {
+      const normalized = Number(value);
+      if (Number.isFinite(normalized) && normalized > 0) {
+        return normalized;
+      }
+    }
+
+    return 0;
+  };
+
+  const formatCityDistrictLabel = (cityValue, districtValue) => {
+    const city = String(cityValue || '').trim() || 'Şehir yok';
+    const district = String(districtValue || '').trim() || 'İlçe yok';
+    return `${city} / ${district}`;
+  };
+
+  const formatPriceLabel = (amount) => (
+    amount > 0
+      ? `₺${amount.toLocaleString('tr-TR')}`
+      : 'Bilgi yok'
+  );
+
+  const getAppointmentStatusMeta = (appointment) => {
+    const quickMeta = getQuickStatusMeta(appointment?.status, appointment);
+    return {
+      tone: quickMeta.tone,
+      icon: quickMeta.icon,
+      label: getStatusLabel(appointment?.status, appointment),
+    };
   };
 
   const loadRescheduleSlots = async (barberId, nextDate) => {
@@ -492,6 +550,20 @@ useEffect(() => {
     }
   }, [alertMessage]);
 
+useEffect(() => {
+  const tooltipNodes = Array.from(document.querySelectorAll('[data-cbk-tooltip="availability"]'));
+  const instances = tooltipNodes.map((node) => new Tooltip(node, {
+    trigger: 'hover focus',
+    placement: 'top',
+    container: 'body',
+    customClass: node.getAttribute('data-tooltip-class') || '',
+  }));
+
+  return () => {
+    instances.forEach((instance) => instance.dispose());
+  };
+}, [suggestedBarbers, selectedCity, selectedDistrict, openReviewBarberId]);
+
 // Randevuları çek
 useEffect(() => {
   const customerInfo = getCustomerInfo();
@@ -526,6 +598,7 @@ useEffect(() => {
           status: data.status || a.status,
           date: data.date || a.date,
           time: data.time || a.time,
+          assignedMaster: data.assignedMaster || a.assignedMaster,
           rescheduleApproval: data.rescheduleApproval || a.rescheduleApproval,
         };
       }
@@ -785,26 +858,209 @@ const handleRemoveFavorite = async (barberId) => {
     setAlertType("danger");
   }
 };
+
+const handleAddFavorite = async (barber) => {
+  try {
+    const customerInfo = getCustomerInfo();
+    if (!customerInfo?._id || !barber?._id) {
+      return;
+    }
+
+    const payload = {
+      barberId: String(barber._id),
+      barberName: String(barber.salonName || barber.name || 'Berber'),
+      city: String(barber.city || ''),
+      district: String(barber.district || ''),
+      phone: String(barber.phone || ''),
+    };
+
+    await axios.post(
+      `http://localhost:5001/api/customers/favorites/${customerInfo._id}`,
+      payload,
+      { headers: getAuthHeaders() }
+    );
+
+    setFavorites((prev) => {
+      const alreadyExists = prev.some((fav) => String(fav.barberId) === String(payload.barberId));
+      if (alreadyExists) {
+        return prev;
+      }
+      return [...prev, payload];
+    });
+
+    setAlertMessage('Favorilere eklendi.');
+    setAlertType('success');
+  } catch (err) {
+    const message = err.response?.data?.message || err.message;
+    if (String(message || '').toLowerCase().includes('zaten favorilerde')) {
+      setAlertMessage('Bu işletme zaten favorilerinde.');
+      setAlertType('info');
+      return;
+    }
+    setAlertMessage('Hata: ' + message);
+    setAlertType('danger');
+  }
+};
+
+const normalizeWhatsappPhone = (rawPhone) => {
+  const digits = String(rawPhone || '').replace(/\D/g, '');
+  if (!digits) {
+    return '';
+  }
+
+  if (digits.startsWith('00') && digits.length > 2) {
+    return digits.slice(2);
+  }
+  if (digits.startsWith('90') && digits.length >= 12) {
+    return digits;
+  }
+  if (digits.length === 11 && digits.startsWith('0')) {
+    return `90${digits.slice(1)}`;
+  }
+  if (digits.length === 10) {
+    return `90${digits}`;
+  }
+  return digits;
+};
+
+const getFavoriteWhatsAppLink = (favorite) => {
+  const normalized = normalizeWhatsappPhone(favorite?.phone);
+  if (!normalized || normalized.length < 10) {
+    return '';
+  }
+
+  const barberLabel = String(favorite?.barberName || 'berber').trim();
+  const message = encodeURIComponent(`Merhaba ${barberLabel}, uygulama uzerinden ulasiyorum.`);
+  return `https://wa.me/${normalized}?text=${message}`;
+};
+
+const handleQuickBookFromFavorite = (favorite) => {
+  const favoriteBarberId = String(favorite?.barberId || '').trim();
+  const matchedBarber = (suggestedBarbers || []).find((item) => String(item?._id || '').trim() === favoriteBarberId);
+
+  setBookingPrefill({
+    city: String(matchedBarber?.city || favorite?.city || selectedCity || profileCity || '').trim(),
+    district: String(matchedBarber?.district || favorite?.district || selectedDistrict || profileDistrict || '').trim(),
+    barberId: favoriteBarberId || String(matchedBarber?._id || '').trim(),
+  });
+
+  goToSection('booking', false);
+};
+  const uniqueAppointments = useMemo(() => {
+    const appointmentMap = new Map();
+    const resolveStatusRank = (appointment) => {
+      const statusLc = String(appointment?.status || '').toLowerCase();
+
+      if (statusLc === 'completed' || statusLc === 'tamamlandı' || statusLc === 'tamamlandi') {
+        return 3;
+      }
+
+      if (statusLc === 'confirmed' || statusLc === 'onaylandı' || statusLc === 'onaylandi') {
+        return 2;
+      }
+
+      if (statusLc === 'pending' || statusLc === 'booked' || statusLc === 'randevu alındı') {
+        return 1;
+      }
+
+      if (statusLc === 'cancelled' || statusLc === 'reddedildi') {
+        return 0;
+      }
+
+      return 1;
+    };
+
+    const resolveStamp = (appointment) => {
+      if (appointment?.createdAt) {
+        const created = new Date(appointment.createdAt).getTime();
+        if (!Number.isNaN(created)) {
+          return created;
+        }
+      }
+
+      const rawId = String(appointment?._id || '');
+      if (rawId.length >= 8) {
+        const unixHex = rawId.slice(0, 8);
+        const unixMs = parseInt(unixHex, 16) * 1000;
+        if (!Number.isNaN(unixMs)) {
+          return unixMs;
+        }
+      }
+
+      const appointmentDate = appointment?.date ? new Date(`${appointment.date}T${appointment.time || '00:00'}`) : null;
+      return appointmentDate instanceof Date && !Number.isNaN(appointmentDate.getTime()) ? appointmentDate.getTime() : 0;
+    };
+
+    [...appointments].forEach((appointment) => {
+      const slotKey = String(appointment?.slotId || '').trim();
+      const fallbackKey = [
+        String(appointment?.barberId || '').trim(),
+        String(appointment?.date || '').trim(),
+        String(appointment?.time || '').trim(),
+        String(appointment?.service?.name || '').trim(),
+      ].join('|');
+      const key = slotKey || fallbackKey;
+      const existing = appointmentMap.get(key);
+
+      if (!existing) {
+        appointmentMap.set(key, appointment);
+        return;
+      }
+
+      const nextStamp = resolveStamp(appointment);
+      const existingStamp = resolveStamp(existing);
+      const nextStatusRank = resolveStatusRank(appointment);
+      const existingStatusRank = resolveStatusRank(existing);
+
+      if (nextStatusRank > existingStatusRank || (nextStatusRank === existingStatusRank && nextStamp >= existingStamp)) {
+        appointmentMap.set(key, appointment);
+      }
+    });
+
+    return Array.from(appointmentMap.values());
+  }, [appointments]);
+
   const pendingAppointments = useMemo(
-    () => appointments.filter((a) => {
+    () => uniqueAppointments.filter((a) => {
       const statusLc = String(a.status || '').toLowerCase();
       return statusLc === 'pending' || statusLc === 'booked' || statusLc === 'randevu alındı';
     }).length,
-    [appointments]
+    [uniqueAppointments]
   );
 
     const sortedAppointments = useMemo(
-      () => [...appointments].sort((a, b) => {
+      () => [...uniqueAppointments].sort((a, b) => {
         const dateCompare = new Date(a.date) - new Date(b.date);
         if (dateCompare !== 0) return dateCompare;
         return a.time.localeCompare(b.time);
       }),
-      [appointments]
+      [uniqueAppointments]
     );
+
+  const appointmentsNewestFirst = useMemo(
+    () => [...uniqueAppointments].sort((a, b) => {
+      const aStamp = new Date(`${a?.date || ''}T${a?.time || '00:00'}`).getTime();
+      const bStamp = new Date(`${b?.date || ''}T${b?.time || '00:00'}`).getTime();
+
+      if (!Number.isNaN(aStamp) && !Number.isNaN(bStamp) && aStamp !== bStamp) {
+        return bStamp - aStamp;
+      }
+
+      const aCreated = new Date(a?.createdAt || 0).getTime();
+      const bCreated = new Date(b?.createdAt || 0).getTime();
+      return (Number.isNaN(bCreated) ? 0 : bCreated) - (Number.isNaN(aCreated) ? 0 : aCreated);
+    }),
+    [uniqueAppointments]
+  );
 
   const recentNotifications = useMemo(
     () => [...sortedAppointments].reverse().slice(0, 5),
     [sortedAppointments]
+  );
+
+  const favoriteBarberIds = useMemo(
+    () => new Set((favorites || []).map((fav) => String(fav?.barberId || '').trim()).filter(Boolean)),
+    [favorites]
   );
 
   const parseAppointmentDateTime = (appointment) => {
@@ -872,27 +1128,77 @@ const handleRemoveFavorite = async (barberId) => {
     [pendingActiveAppointments, activeAppointments]
   );
 
-  const quickNoteStatus = useMemo(() => {
-    const listItems = activeAppointments.slice(0, 6).map((appointment) => {
-      const statusMeta = getQuickStatusMeta(appointment.status, appointment);
-      return {
-        id: appointment._id,
-        slotId: appointment.slotId,
-        barberId: appointment.barberId,
-        barberName: appointment.barberName || 'Berber',
-        dateLabel: new Date(appointment.date).toLocaleDateString(),
-        timeLabel: appointment.time || '--:--',
-        statusTone: statusMeta.tone,
-        statusIcon: statusMeta.icon,
-        statusLabel: statusMeta.label,
-        canRemind: canSendBarberReminder(appointment),
-        reminderSentAt: appointment.reminderSentAt || null,
-        canCancel: canCancelAppointment(appointment),
-        canEdit: canEditAppointment(appointment),
-        canRespondReschedule: canRespondToRescheduleProposal(appointment),
-        rescheduleApproval: appointment.rescheduleApproval || null,
-      };
+  const resolveAppointmentBarberMeta = (appointment) => {
+    const appointmentBarberId = String(appointment?.barberId || '').trim();
+    const appointmentBarberName = String(appointment?.barberName || '').trim();
+    const appointmentSalonName = String(appointment?.barberSalonName || '').trim();
+
+    const suggestedMatch = (suggestedBarbers || []).find((barber) => {
+      const candidateId = String(barber?._id || '').trim();
+      if (appointmentBarberId && candidateId && candidateId === appointmentBarberId) {
+        return true;
+      }
+
+      const candidateSalon = String(barber?.salonName || '').trim().toLowerCase();
+      const candidateName = String(barber?.name || '').trim().toLowerCase();
+      const appointmentNameLc = appointmentBarberName.toLowerCase();
+
+      return Boolean(
+        appointmentNameLc
+        && ((candidateSalon && appointmentNameLc.includes(candidateSalon))
+          || (candidateName && appointmentNameLc.includes(candidateName)))
+      );
     });
+
+    const favoriteMatch = (favorites || []).find((favorite) => {
+      const favoriteBarberId = String(favorite?.barberId || '').trim();
+      if (appointmentBarberId && favoriteBarberId && favoriteBarberId === appointmentBarberId) {
+        return true;
+      }
+
+      const favoriteNameLc = String(favorite?.barberName || '').trim().toLowerCase();
+      return Boolean(appointmentBarberName && favoriteNameLc && appointmentBarberName.toLowerCase().includes(favoriteNameLc));
+    });
+
+    const displayName = String(appointmentSalonName || suggestedMatch?.salonName || appointmentBarberName || suggestedMatch?.name || favoriteMatch?.barberName || 'Berber').trim();
+    const city = String(appointment?.barberCity || suggestedMatch?.city || '').trim();
+    const district = String(appointment?.barberDistrict || suggestedMatch?.district || favoriteMatch?.district || '').trim();
+
+    return {
+      displayName,
+      city,
+      district,
+      locationLabel: formatCityDistrictLabel(city, district),
+    };
+  };
+
+  const quickNoteStatus = useMemo(() => {
+    const listItems = [...activeAppointments]
+      .sort((a, b) => getAppointmentCreatedTime(b) - getAppointmentCreatedTime(a))
+      .slice(0, 6)
+      .map((appointment) => {
+        const statusMeta = getQuickStatusMeta(appointment.status, appointment);
+        const barberMeta = resolveAppointmentBarberMeta(appointment);
+        return {
+          id: appointment._id,
+          slotId: appointment.slotId,
+          barberId: appointment.barberId,
+          barberName: barberMeta.displayName,
+          locationLabel: barberMeta.locationLabel,
+          masterName: getAssignedMasterName(appointment),
+          dateLabel: new Date(appointment.date).toLocaleDateString(),
+          timeLabel: appointment.time || '--:--',
+          statusTone: statusMeta.tone,
+          statusIcon: statusMeta.icon,
+          statusLabel: statusMeta.label,
+          canRemind: canSendBarberReminder(appointment),
+          reminderSentAt: appointment.reminderSentAt || null,
+          canCancel: canCancelAppointment(appointment),
+          canEdit: canEditAppointment(appointment),
+          canRespondReschedule: canRespondToRescheduleProposal(appointment),
+          rescheduleApproval: appointment.rescheduleApproval || null,
+        };
+      });
 
     if (!highlightedAppointment) {
       return {
@@ -939,7 +1245,7 @@ const handleRemoveFavorite = async (barberId) => {
       label: pendingCount > 1 ? `${pendingCount} Onay Bekleniyor` : 'Onay Bekleniyor',
       items: listItems,
     };
-  }, [highlightedAppointment, pendingActiveAppointments, activeAppointments]);
+  }, [highlightedAppointment, pendingActiveAppointments, activeAppointments, suggestedBarbers, favorites]);
 
   const pastAppointments = useMemo(
     () => [...sortedAppointments]
@@ -1007,11 +1313,13 @@ const handleRemoveFavorite = async (barberId) => {
   };
 
   const getStatusLabel = (status, appointment) => {
-    if (status === 'pending' || status === 'booked') return 'Onay Bekleyen';
-    if (status === 'confirmed') return 'Onaylandı';
+    const statusLc = String(status || '').toLowerCase();
+    if (statusLc === 'pending' || statusLc === 'booked') return 'Onay Bekleyen';
+    if (statusLc === 'confirmed') return 'Onaylandı';
+    if (statusLc === 'completed' || statusLc === 'tamamlandı') return 'Tamamlandı';
     if (status === 'Saat Değişikliği Müşteri Onayı Bekleniyor') return 'Saat Onayın Bekleniyor';
     if (status === 'Saat Değişikliği Berber Onayı Bekleniyor') return 'Berber Son Onayı Bekleniyor';
-    if (status === 'cancelled') {
+    if (statusLc === 'cancelled') {
       const reasonLc = String(appointment?.cancelReason || '').toLowerCase();
       if (reasonLc.includes('müşteri')) return 'İptal Ettin';
       if (reasonLc.includes('berber')) return 'Berber İptal Etti';
@@ -1036,7 +1344,56 @@ const handleRemoveFavorite = async (barberId) => {
     return `${'★'.repeat(rating)}${'☆'.repeat(5 - rating)}`;
   };
 
+  const WEEK_DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+  const parseClockToMinutes = (clockValue) => {
+    const [rawHour, rawMinute] = String(clockValue || '').split(':');
+    const hour = Number(rawHour);
+    const minute = Number(rawMinute);
+    if (!Number.isInteger(hour) || !Number.isInteger(minute)) {
+      return null;
+    }
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+      return null;
+    }
+    return hour * 60 + minute;
+  };
+
+  const getBarberAvailabilityInfo = (barber) => {
+    const workingHours = barber?.workingHours || {};
+    const now = new Date();
+    const todayKey = WEEK_DAY_KEYS[now.getDay()];
+    const today = workingHours?.[todayKey] || null;
+
+    const open = String(today?.open || '').trim();
+    const close = String(today?.close || '').trim();
+    const todayIsOpen = Boolean(today?.isOpen) && Boolean(open) && Boolean(close);
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const openMinutes = parseClockToMinutes(open);
+    const closeMinutes = parseClockToMinutes(close);
+    const validWindow = openMinutes !== null && closeMinutes !== null && closeMinutes > openMinutes;
+
+    if (todayIsOpen && validWindow && nowMinutes >= openMinutes && nowMinutes < closeMinutes) {
+      return {
+        isOpen: true,
+        badgeLabel: 'Açık',
+        tooltipText: `Kapanış saati: ${close}`,
+        tooltipClass: 'availability-tooltip-open',
+      };
+    }
+
+    return {
+      isOpen: false,
+      badgeLabel: 'Kapalı',
+      tooltipText: open
+        ? `Açılış saati: ${open}`
+        : 'Açılış saati belirtilmedi',
+      tooltipClass: 'availability-tooltip-closed',
+    };
+  };
+
   const hadPastServiceWithBarber = (barber) => {
+    const targetBarberId = String(barber?._id || '').trim();
     const barberNameLc = (barber?.name || '').toLowerCase();
     const salonNameLc = (barber?.salonName || '').toLowerCase();
     const now = new Date();
@@ -1055,9 +1412,16 @@ const handleRemoveFavorite = async (barberId) => {
         return false;
       }
 
+      const appBarberId = String(app?.barberId || '').trim();
+      if (targetBarberId && appBarberId && appBarberId === targetBarberId) {
+        return true;
+      }
+
       const appBarberNameLc = (app?.barberName || '').toLowerCase();
+      const appSalonNameLc = (app?.barberSalonName || '').toLowerCase();
       return (barberNameLc && appBarberNameLc.includes(barberNameLc))
-        || (salonNameLc && appBarberNameLc.includes(salonNameLc));
+        || (salonNameLc && appBarberNameLc.includes(salonNameLc))
+        || (salonNameLc && appSalonNameLc.includes(salonNameLc));
     });
   };
 
@@ -1094,12 +1458,21 @@ const handleRemoveFavorite = async (barberId) => {
     }));
   };
 
+  const setReviewFeedback = (barberId, message, type) => {
+    setReviewFeedbackByBarber((prev) => ({
+      ...prev,
+      [barberId]: {
+        message: String(message || ''),
+        type: String(type || 'info'),
+      },
+    }));
+  };
+
   const handleSubmitReview = async (barberId) => {
     const draft = reviewDrafts[barberId] || { rating: 5, comment: '' };
     const rating = Number(draft.rating) || 0;
     if (rating < 1 || rating > 5) {
-      setAlertMessage('Yorum puanı 1 ile 5 arasında olmalıdır.');
-      setAlertType('warning');
+      setReviewFeedback(barberId, 'Yorum puanı 1 ile 5 arasında olmalıdır.', 'warning');
       return;
     }
 
@@ -1137,12 +1510,9 @@ const handleRemoveFavorite = async (barberId) => {
         };
       }));
 
-      setAlertMessage('Yorumunuz başarıyla kaydedildi.');
-      setAlertType('success');
-      setOpenReviewBarberId('');
+      setReviewFeedback(barberId, 'Yorumunuz başarıyla kaydedildi.', 'success');
     } catch (err) {
-      setAlertMessage(err.response?.data?.message || 'Yorum gönderilirken bir hata oluştu.');
-      setAlertType('danger');
+      setReviewFeedback(barberId, err.response?.data?.message || 'Yorum gönderilirken bir hata oluştu.', 'danger');
     } finally {
       setSubmittingReviewBarberId('');
     }
@@ -1170,12 +1540,9 @@ const handleRemoveFavorite = async (barberId) => {
         };
       }));
 
-      setAlertMessage('Yorumunuz silindi.');
-      setAlertType('success');
-      setOpenReviewBarberId('');
+      setReviewFeedback(barberId, 'Yorumunuz silindi.', 'success');
     } catch (err) {
-      setAlertMessage(err.response?.data?.message || 'Yorum silinirken bir hata oluştu.');
-      setAlertType('danger');
+      setReviewFeedback(barberId, err.response?.data?.message || 'Yorum silinirken bir hata oluştu.', 'danger');
     } finally {
       setSubmittingReviewBarberId('');
     }
@@ -1194,7 +1561,14 @@ const handleRemoveFavorite = async (barberId) => {
         </div>
 
         <div className="home-hero-actions">
-          <button type="button" className="btn btn-primary" onClick={() => goToSection('booking', false)}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              setBookingPrefill(null);
+              goToSection('booking', false);
+            }}
+          >
             📅 Yeni Randevu
           </button>
           <button type="button" className="btn btn-outline-primary" onClick={() => goToSection('appointments', false)}>
@@ -1214,14 +1588,6 @@ const handleRemoveFavorite = async (barberId) => {
 
       <div className="home-quick-note mt-3">
         <div className="home-quick-note-title">Hızlı bakış</div>
-        <div className="home-quick-note-text">
-          {String(quickNoteStatus.label || '').toLowerCase().includes('onay bekleniyor') ? null : (
-            <span className={`home-quick-note-status-pill home-quick-note-status-pill-${quickNoteStatus.tone}`}>
-              <span>{quickNoteStatus.icon}</span>
-              <span>{quickNoteStatus.label}</span>
-            </span>
-          )}
-        </div>
         {quickNoteStatus.items.length > 0 ? (
           <div className="home-quick-note-list mt-2">
             {quickNoteStatus.items.map((item) => (
@@ -1229,7 +1595,9 @@ const handleRemoveFavorite = async (barberId) => {
                 <div className="home-quick-note-item-head">
                   <div>
                     <div className="fw-semibold">{item.barberName}</div>
+                    {item.masterName && <div className="small text-muted">Usta: {item.masterName}</div>}
                     <div className="small text-muted">{item.dateLabel} · {item.timeLabel}</div>
+                    <div className="small text-muted">Konum: {item.locationLabel}</div>
                   </div>
                   <div className="home-quick-note-right">
                     <span className={`home-quick-note-status-pill home-quick-note-status-pill-${item.statusTone}`}>
@@ -1374,7 +1742,14 @@ const handleRemoveFavorite = async (barberId) => {
         <div className="home-live-card">
           <div className="home-live-head d-flex justify-content-between align-items-center mb-2">
             <h3 className="home-live-title mb-0">Önerilen Berberler</h3>
-            <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => goToSection('booking', false)}>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-primary"
+              onClick={() => {
+                setBookingPrefill(null);
+                goToSection('booking', false);
+              }}
+            >
               Tümü
             </button>
           </div>
@@ -1421,6 +1796,8 @@ const handleRemoveFavorite = async (barberId) => {
                 const ownReview = getOwnReviewForBarber(barber);
                 const canDeleteOwn = canDeleteOwnReview(ownReview);
                 const hasService = hadPastServiceWithBarber(barber);
+                const availability = getBarberAvailabilityInfo(barber);
+                const isFavorite = favoriteBarberIds.has(String(barber?._id || '').trim());
 
                 return (
                   <div
@@ -1431,7 +1808,38 @@ const handleRemoveFavorite = async (barberId) => {
                     }}
                     data-slide-index={index}
                   >
-                    <div className="home-barber-name">{barber.salonName || barber.name}</div>
+                    <div className="home-barber-topline">
+                      <div className="home-barber-title-wrap">
+                        <button
+                          type="button"
+                          className={`home-barber-favorite-star ${isFavorite ? 'is-active' : ''}`}
+                          aria-label={isFavorite ? 'Favorilerde' : 'Favorilere ekle'}
+                          title={isFavorite ? 'Favorilerde' : 'Favorilere ekle'}
+                          onClick={() => {
+                            if (!isFavorite) {
+                              handleAddFavorite(barber);
+                            }
+                          }}
+                        >
+                          {isFavorite ? '★' : '☆'}
+                        </button>
+                        <div className="home-barber-name">{barber.salonName || barber.name}</div>
+                      </div>
+                      <span
+                        className={`home-barber-open-pill ${availability.isOpen ? 'is-open' : 'is-closed'}`}
+                        data-cbk-tooltip="availability"
+                        data-bs-toggle="tooltip"
+                        data-tooltip-class={availability.tooltipClass}
+                        title={availability.tooltipText}
+                        tabIndex={0}
+                        role="button"
+                        aria-label={`Durum: ${availability.badgeLabel}. ${availability.tooltipText}`}
+                      >
+                          <span className="home-barber-open-dot" aria-hidden="true" />
+                          <span>{availability.badgeLabel}</span>
+                          <span className="home-barber-open-clock" aria-hidden="true">🕒</span>
+                      </span>
+                    </div>
                       <div className="home-barber-meta text-muted">{barber.name} · {barber.city || 'Şehir yok'} / {barber.district || 'İlçe yok'}</div>
                     <div className="home-barber-meta text-muted">{barber.services?.length || 0} hizmet · {barber.address || 'Adres bilgisi yok'}</div>
 
@@ -1447,7 +1855,18 @@ const handleRemoveFavorite = async (barberId) => {
                     )}
 
                     <div className="d-flex gap-2 flex-wrap mt-2">
-                      <button type="button" className="btn btn-sm btn-primary" onClick={() => goToSection('booking', false)}>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-primary"
+                        onClick={() => {
+                          setBookingPrefill({
+                            city: barber.city || selectedCity || '',
+                            district: barber.district || selectedDistrict || '',
+                            barberId: barber._id || '',
+                          });
+                          goToSection('booking', false);
+                        }}
+                      >
                         Randevu Al
                       </button>
                       {hasService ? (
@@ -1462,6 +1881,10 @@ const handleRemoveFavorite = async (barberId) => {
                                 rating: prev[barber._id]?.rating || ownReview?.rating || 5,
                                 comment: prev[barber._id]?.comment || ownReview?.comment || '',
                               },
+                            }));
+                            setReviewFeedbackByBarber((prev) => ({
+                              ...prev,
+                              [barber._id]: { message: '', type: '' },
                             }));
                           }}
                         >
@@ -1499,6 +1922,11 @@ const handleRemoveFavorite = async (barberId) => {
                             placeholder="Deneyiminizi kısa bir şekilde paylaşın"
                           />
                         </div>
+                        {reviewFeedbackByBarber[barber._id]?.message && (
+                          <div className={`alert alert-${reviewFeedbackByBarber[barber._id]?.type || 'info'} py-2 px-3 mb-2`} role="alert">
+                            {reviewFeedbackByBarber[barber._id]?.message}
+                          </div>
+                        )}
                         <div className="d-flex gap-2 align-items-center flex-wrap">
                           <button
                             type="button"
@@ -1546,7 +1974,14 @@ const handleRemoveFavorite = async (barberId) => {
                     ? `${suggestionDistrictLabel} bölgesinde şu an listelenecek berber yok.`
                     : 'Sana en yakın seçenekleri göstermek için veri oluştukça burada listelenecek.'}
                 </div>
-                <button type="button" className="btn btn-outline-primary btn-sm mt-2" onClick={() => goToSection('booking', false)}>
+                <button
+                  type="button"
+                  className="btn btn-outline-primary btn-sm mt-2"
+                  onClick={() => {
+                    setBookingPrefill(null);
+                    goToSection('booking', false);
+                  }}
+                >
                   Tüm berberleri gör
                 </button>
               </div>
@@ -1560,6 +1995,13 @@ const handleRemoveFavorite = async (barberId) => {
             <>
             <div className="d-grid gap-2 home-past-list home-swipe-track" ref={pastScrollRef}>
               {pastAppointments.map((app, index) => (
+                (() => {
+                  const pastBarberMeta = resolveAppointmentBarberMeta(app);
+                  const pastStatusMeta = getAppointmentStatusMeta(app);
+                  const pastMasterName = getAssignedMasterName(app);
+                  const priceAmount = getAppointmentServicePrice(app);
+
+                  return (
                 <div
                   key={app._id}
                   className="home-agenda-item home-swipe-card"
@@ -1569,15 +2011,22 @@ const handleRemoveFavorite = async (barberId) => {
                   data-slide-index={index}
                 >
                   <div className="home-past-topline">
-                    <div className="fw-semibold">{app.barberName || 'Berber'}</div>
-                    <span className={`badge text-bg-${getStatusColor(app.status)}`}>{getStatusLabel(app.status, app)}</span>
+                    <div className="fw-semibold">{pastBarberMeta.displayName || 'Berber'}</div>
+                    <span className={`home-quick-note-status-pill home-quick-note-status-pill-${pastStatusMeta.tone}`}>
+                      <span>{pastStatusMeta.icon}</span>
+                      <span>{pastStatusMeta.label}</span>
+                    </span>
                   </div>
                   <div className="small text-muted">{new Date(app.date).toLocaleDateString()} · {app.time}</div>
                   <div className="home-past-detail mt-2">
+                    <div><span className="text-muted">Konum:</span> {pastBarberMeta.locationLabel}</div>
                     <div><span className="text-muted">Hizmet:</span> {app.service?.name || 'Belirtilmemiş'}</div>
-                    <div><span className="text-muted">Ücret:</span> {app.service?.price ? `₺${app.service.price}` : 'Bilgi yok'}</div>
+                    {pastMasterName && <div><span className="text-muted">Usta:</span> {pastMasterName}</div>}
+                    <div><span className="text-muted">Ücret:</span> {formatPriceLabel(priceAmount)}</div>
                   </div>
                 </div>
+                  );
+                })()
               ))}
             </div>
             <div className="home-swipe-dots d-lg-none">
@@ -1633,8 +2082,10 @@ const handleRemoveFavorite = async (barberId) => {
           <div className="home-booking-shell">
             <BookingPage
               embedded
+              initialSelection={bookingPrefill}
               onBack={() => goToSection('home', false)}
               onSuccess={() => {
+                setBookingPrefill(null);
                 goToSection('home', false);
                 window.location.reload();
               }}
@@ -1645,32 +2096,59 @@ const handleRemoveFavorite = async (barberId) => {
 
       if (activeSection === 'appointments') {
         return (
-          <div className="card border-0 shadow-sm">
-            <div className="card-body">
+          <div className="card border-0 shadow-sm business-panel business-panel-appointments">
+            <div className="card-header business-panel-header d-flex justify-content-between align-items-start gap-3">
+              <div>
+                <h5 className="mb-1 business-panel-title">Randevu Listesi</h5>
+                <div className="business-panel-subtitle">Tüm kayıtlar güncelden eskiye sıralanır.</div>
+              </div>
+              <span className="badge rounded-pill text-bg-light business-count-badge">{appointmentsNewestFirst.length} kayıt</span>
+            </div>
+            <div className="card-body pt-3">
               {loadingAppointments ? (
                 <div className="text-muted">Randevular yükleniyor...</div>
-              ) : sortedAppointments.length > 0 ? (
+              ) : appointmentsNewestFirst.length > 0 ? (
                 <>
                   <div className="d-none d-md-block table-responsive">
-                    <table className="table table-striped mb-0">
+                    <table className="table table-hover align-middle mb-0 appointments-table business-table">
                       <thead>
                         <tr>
                           <th>Tarih</th>
                           <th>Saat</th>
-                          <th>Berber</th>
-                          <th>Hizmet</th>
+                          <th>İşletme</th>
+                          <th>Usta</th>
+                          <th>Hizmet / Ücret</th>
                           <th>Durum</th>
                           <th>İşlem</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {sortedAppointments.map((app) => (
+                        {appointmentsNewestFirst.map((app) => {
+                          const barberMeta = resolveAppointmentBarberMeta(app);
+                          const masterName = getAssignedMasterName(app);
+                          const priceAmount = getAppointmentServicePrice(app);
+                          const serviceName = String(app?.service?.name || '').trim() || 'Belirtilmemiş';
+                          const statusMeta = getAppointmentStatusMeta(app);
+
+                          return (
                           <tr key={app._id}>
                             <td>{new Date(app.date).toLocaleDateString()}</td>
                             <td>{app.time}</td>
-                            <td>{app.barberName}</td>
-                            <td>{app.service?.name || '-'}{app.service?.price ? ` (₺${app.service.price})` : ''}</td>
-                            <td><span className={`badge text-bg-${getStatusColor(app.status)}`}>{getStatusLabel(app.status, app)}</span></td>
+                            <td>
+                              <div className="appointment-table-business">{barberMeta.displayName || 'Berber'}</div>
+                              <div className="appointment-table-location">{barberMeta.locationLabel}</div>
+                            </td>
+                            <td>{masterName || 'Usta seçilmedi'}</td>
+                            <td>
+                              <div>{serviceName}</div>
+                              <div className="appointment-table-price">{formatPriceLabel(priceAmount)}</div>
+                            </td>
+                            <td>
+                              <span className={`home-quick-note-status-pill home-quick-note-status-pill-${statusMeta.tone}`}>
+                                <span>{statusMeta.icon}</span>
+                                <span>{statusMeta.label}</span>
+                              </span>
+                            </td>
                             <td>
                               {canRespondToRescheduleProposal(app) ? (
                                 <div className="d-flex gap-2 flex-wrap">
@@ -1691,30 +2169,39 @@ const handleRemoveFavorite = async (barberId) => {
                                     Reddet
                                   </button>
                                 </div>
-                              ) : (
-                                <span className="text-muted small">-</span>
-                              )}
+                              ) : <span className="text-muted small">İşlem yok</span>}
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
 
                   <div className="d-md-none d-grid gap-2">
-                    {sortedAppointments.map((app) => (
-                      <div key={app._id} className="appointment-mobile-card p-3 rounded-3 border">
+                    {appointmentsNewestFirst.map((app) => {
+                      const barberMeta = resolveAppointmentBarberMeta(app);
+                      const masterName = getAssignedMasterName(app);
+                      const priceAmount = getAppointmentServicePrice(app);
+                      const serviceName = String(app?.service?.name || '').trim() || 'Belirtilmemiş';
+                      const statusMeta = getAppointmentStatusMeta(app);
+
+                      return (
+                      <div key={app._id} className="appointment-mobile-card business-mobile-card p-3 rounded-3 border">
                         <div className="d-flex justify-content-between align-items-center mb-2">
-                          <strong>{app.barberName || 'Berber'}</strong>
-                          <span className={`badge text-bg-${getStatusColor(app.status)}`}>{getStatusLabel(app.status, app)}</span>
+                          <strong>{barberMeta.displayName || 'Berber'}</strong>
+                          <span className={`home-quick-note-status-pill home-quick-note-status-pill-${statusMeta.tone}`}>
+                            <span>{statusMeta.icon}</span>
+                            <span>{statusMeta.label}</span>
+                          </span>
                         </div>
-                        <div className="small text-muted mb-1">{new Date(app.date).toLocaleDateString()} - {app.time}</div>
-                        <div className="small">
-                          <span className="fw-semibold">Hizmet: </span>
-                          {app.service?.name || '-'}{app.service?.price ? ` (₺${app.service.price})` : ''}
-                        </div>
+                        <div className="small text-muted mb-2">{new Date(app.date).toLocaleDateString()} - {app.time}</div>
+                        <div className="small appointment-mobile-detail-row"><span className="fw-semibold">Konum: </span>{barberMeta.locationLabel}</div>
+                        <div className="small appointment-mobile-detail-row"><span className="fw-semibold">Usta: </span>{masterName || 'Usta seçilmedi'}</div>
+                        <div className="small appointment-mobile-detail-row"><span className="fw-semibold">Hizmet: </span>{serviceName}</div>
+                        <div className="small appointment-mobile-detail-row"><span className="fw-semibold">Ücret: </span>{formatPriceLabel(priceAmount)}</div>
                         {canRespondToRescheduleProposal(app) && (
-                          <div className="d-flex gap-2 mt-2">
+                          <div className="d-flex gap-2 mt-3">
                             <button
                               type="button"
                               className="btn btn-sm btn-success"
@@ -1734,7 +2221,8 @@ const handleRemoveFavorite = async (barberId) => {
                           </div>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </>
               ) : (
@@ -1782,35 +2270,103 @@ const handleRemoveFavorite = async (barberId) => {
 
       if (activeSection === 'favorites') {
         return (
-          <div className="card border-0 shadow-sm">
-            <div className="card-body">
+          <div className="card border-0 shadow-sm business-panel business-panel-favorites">
+            <div className="card-header business-panel-header d-flex justify-content-between align-items-start gap-3">
+              <div>
+                <h5 className="mb-1 business-panel-title">Favori İşletmeler</h5>
+                <div className="business-panel-subtitle">Sık tercih ettiğin berberleri buradan yönetebilirsin.</div>
+              </div>
+              <span className="badge rounded-pill text-bg-light business-count-badge">{favorites.length} favori</span>
+            </div>
+            <div className="card-body pt-3">
               {favorites.length > 0 ? (
-                <div className="table-responsive">
-                  <table className="table table-hover mb-0">
-                    <thead>
-                      <tr>
-                        <th>Berber Adı</th>
-                        <th>İlçe</th>
-                        <th>Telefon</th>
-                        <th>İşlem</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {favorites.map((fav) => (
-                        <tr key={fav._id}>
-                          <td>{fav.barberName}</td>
-                          <td>{fav.district}</td>
-                          <td>{fav.phone}</td>
-                          <td>
-                            <button className="btn btn-sm btn-danger" onClick={() => handleRemoveFavorite(fav.barberId)}>
-                              Sil
-                            </button>
-                          </td>
+                <>
+                  <div className="d-none d-md-block table-responsive">
+                    <table className="table table-hover align-middle mb-0 favorites-table business-table">
+                      <thead>
+                        <tr>
+                          <th>İşletme</th>
+                          <th>Konum</th>
+                          <th>Telefon</th>
+                          <th className="text-end">İşlem</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {favorites.map((fav) => (
+                          <tr key={fav._id || fav.barberId}>
+                            <td>
+                              <div className="d-flex align-items-center gap-2">
+                                <span className="favorite-table-star" aria-hidden="true">★</span>
+                                <span className="fw-semibold">{fav.barberName || 'Berber'}</span>
+                              </div>
+                            </td>
+                            <td>{formatCityDistrictLabel(fav.city, fav.district)}</td>
+                            <td>
+                              <div>{fav.phone || '-'}</div>
+                              {getFavoriteWhatsAppLink(fav) ? (
+                                <a
+                                  className="favorite-wa-link"
+                                  href={getFavoriteWhatsAppLink(fav)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  WhatsApp ile yaz
+                                </a>
+                              ) : (
+                                <span className="favorite-wa-link disabled">WhatsApp baglantisi yok</span>
+                              )}
+                            </td>
+                            <td className="text-end">
+                              <div className="d-inline-flex gap-2 favorite-action-group">
+                                <button className="btn btn-sm btn-primary" onClick={() => handleQuickBookFromFavorite(fav)}>
+                                  Hizli Randevu
+                                </button>
+                                <button className="btn btn-sm btn-outline-danger" onClick={() => handleRemoveFavorite(fav.barberId)}>
+                                  Favoriden Çıkar
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="d-md-none d-grid gap-2">
+                    {favorites.map((fav) => (
+                      <div key={fav._id || fav.barberId} className="favorite-mobile-card business-mobile-card p-3 rounded-3 border">
+                        <div className="d-flex justify-content-between align-items-start gap-2">
+                          <div>
+                            <div className="d-flex align-items-center gap-2">
+                              <span className="favorite-table-star" aria-hidden="true">★</span>
+                              <strong>{fav.barberName || 'Berber'}</strong>
+                            </div>
+                            <div className="small text-muted mt-1">Konum: {formatCityDistrictLabel(fav.city, fav.district)}</div>
+                            <div className="small text-muted">Telefon: {fav.phone || '-'}</div>
+                            {getFavoriteWhatsAppLink(fav) && (
+                              <a
+                                className="favorite-wa-link d-inline-block mt-1"
+                                href={getFavoriteWhatsAppLink(fav)}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                WhatsApp ile yaz
+                              </a>
+                            )}
+                          </div>
+                          <div className="d-grid gap-2">
+                            <button className="btn btn-sm btn-primary" onClick={() => handleQuickBookFromFavorite(fav)}>
+                              Randevu Al
+                            </button>
+                            <button className="btn btn-sm btn-outline-danger" onClick={() => handleRemoveFavorite(fav.barberId)}>
+                              Çıkar
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
               ) : (
                 <div className="alert alert-info mb-0">Henüz favori berber eklemediniz.</div>
               )}

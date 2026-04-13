@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import api from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import 'bootstrap/dist/css/bootstrap.min.css';
@@ -12,7 +12,22 @@ const toLocalDateInput = (date) => {
   return `${year}-${month}-${day}`;
 };
 
-function BookingPage({ embedded = false, onBack, onSuccess }) {
+const WEEK_DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+const parseClockToMinutes = (clockValue) => {
+  const [rawHour, rawMinute] = String(clockValue || '').split(':');
+  const hour = Number(rawHour);
+  const minute = Number(rawMinute);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) {
+    return null;
+  }
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+  return hour * 60 + minute;
+};
+
+function BookingPage({ embedded = false, onBack, onSuccess, initialSelection = null }) {
   const [city, setCity] = useState('');
   const [district, setDistrict] = useState('');
   const [cities, setCities] = useState([]);
@@ -24,6 +39,7 @@ function BookingPage({ embedded = false, onBack, onSuccess }) {
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [selectedService, setSelectedService] = useState(null);
+  const [selectedMasterId, setSelectedMasterId] = useState('');
   const [serviceDropdownOpen, setServiceDropdownOpen] = useState(false);
   const [availableSlots, setAvailableSlots] = useState([]);
   const [showPayment, setShowPayment] = useState(false);
@@ -31,6 +47,7 @@ function BookingPage({ embedded = false, onBack, onSuccess }) {
   const [isMobile, setIsMobile] = useState(false);
   const [mobileStep, setMobileStep] = useState(1);
   const [nowTick, setNowTick] = useState(Date.now());
+  const appliedPrefillRef = useRef('');
 
   const navigate = useNavigate();
   const today = useMemo(() => toLocalDateInput(new Date(nowTick)), [nowTick]);
@@ -80,14 +97,27 @@ const loadDistricts = async (city) => {
   const res = await api.get(`/locations/districts/${city}`);
   setDistricts(res.data);
 };
-const loadBarbers = async () => {
-    if (!city || !district) return;
+const loadBarbers = async (forcedCity = city, forcedDistrict = district, preferredBarberId = '') => {
+    if (!forcedCity || !forcedDistrict) return;
     setLoadingBarbers(true);
     setBarbersFetched(true);
     setSelectedBarber(null);
     try {
-      const res = await api.get('/barbers/byDistrict', { params: { city, district } });
-      setBarbers(res.data || []);
+      const res = await api.get('/barbers/byDistrict', { params: { city: forcedCity, district: forcedDistrict } });
+      const incomingBarbers = Array.isArray(res.data) ? res.data : [];
+      setBarbers(incomingBarbers);
+
+      if (preferredBarberId) {
+        const matched = incomingBarbers.find((item) => String(item?._id || '') === String(preferredBarberId));
+        if (matched) {
+          setSelectedBarber(matched);
+          if (isMobile) {
+            setMobileStep(3);
+          }
+          return;
+        }
+      }
+
       if (isMobile) {
         setMobileStep(2);
       }
@@ -98,6 +128,37 @@ const loadBarbers = async () => {
       setLoadingBarbers(false);
     }
 };
+
+useEffect(() => {
+  const prefillCity = String(initialSelection?.city || '').trim();
+  const prefillDistrict = String(initialSelection?.district || '').trim();
+  const prefillBarberId = String(initialSelection?.barberId || '').trim();
+
+  if (!prefillCity || !prefillDistrict) {
+    return;
+  }
+
+  const prefillKey = `${prefillCity}|${prefillDistrict}|${prefillBarberId}`;
+  if (appliedPrefillRef.current === prefillKey) {
+    return;
+  }
+  appliedPrefillRef.current = prefillKey;
+
+  const applyPrefill = async () => {
+    setCity(prefillCity);
+    setDistrict(prefillDistrict);
+    setSelectedService(null);
+    setSelectedMasterId('');
+    setSelectedDate('');
+    setSelectedSlot(null);
+    setAvailableSlots([]);
+
+    await loadDistricts(prefillCity);
+    await loadBarbers(prefillCity, prefillDistrict, prefillBarberId);
+  };
+
+  applyPrefill();
+}, [initialSelection]);
 
   const renderStars = (value) => {
     const rating = Math.max(0, Math.min(5, Math.round(Number(value) || 0)));
@@ -130,12 +191,14 @@ const loadBarbers = async () => {
       try {
         const customerInfo = JSON.parse(localStorage.getItem('customerInfo'));
         // Slot rezervasyonu - bu zaten customer appointment'ını ekliyor
-        const slotRes = await api.patch(`/slots/${selectedSlot._id}/book`, {
+        await api.patch(`/slots/${selectedSlot._id}/book`, {
           customerId: customerInfo._id,
           customerPhone: customerInfo.phone,
           customerName: `${customerInfo.name || ''} ${customerInfo.surname || ''}`.trim(),
+          serviceId: selectedService?._id,
           service: selectedService?.name,
-          price: selectedPrice
+          price: selectedPrice,
+          assignedMasterId: selectedMasterId || undefined,
         });
 
         setPaymentStatus('success');
@@ -173,14 +236,92 @@ const loadBarbers = async () => {
 
   const recommendedSlotId = selectableSlots?.[0]?._id || '';
   const serviceList = selectedBarber?.services || [];
+  const activeMasters = useMemo(
+    () => (selectedBarber?.masters || []).filter((master) => master && master.isActive !== false),
+    [selectedBarber]
+  );
+  const selectedMaster = useMemo(
+    () => activeMasters.find((master) => String(master._id) === String(selectedMasterId)) || null,
+    [activeMasters, selectedMasterId]
+  );
+
+  const isBarberOpenOnDate = useCallback((barber, dateValue) => {
+    if (!barber) {
+      return true;
+    }
+
+    const workingHours = barber.workingHours;
+    if (!workingHours || typeof workingHours !== 'object') {
+      return true;
+    }
+
+    const dateObj = dateValue instanceof Date ? dateValue : new Date(`${String(dateValue)}T00:00:00`);
+    if (Number.isNaN(dateObj.getTime())) {
+      return true;
+    }
+
+    const dayKey = WEEK_DAY_KEYS[dateObj.getDay()];
+    const daySchedule = workingHours?.[dayKey];
+    if (!daySchedule || daySchedule.isOpen !== true) {
+      return false;
+    }
+
+    const openMinutes = parseClockToMinutes(daySchedule.open);
+    const closeMinutes = parseClockToMinutes(daySchedule.close);
+    return openMinutes !== null && closeMinutes !== null && closeMinutes > openMinutes;
+  }, []);
+
+  const shouldHideTodayForBarber = useMemo(() => {
+    if (!selectedBarber) {
+      return false;
+    }
+
+    const workingHours = selectedBarber.workingHours;
+    if (!workingHours || typeof workingHours !== 'object') {
+      return false;
+    }
+
+    const now = new Date(nowTick);
+    const dayKey = WEEK_DAY_KEYS[now.getDay()];
+    const daySchedule = workingHours?.[dayKey];
+    if (!daySchedule || daySchedule.isOpen !== true) {
+      return true;
+    }
+
+    const openMinutes = parseClockToMinutes(daySchedule.open);
+    const closeMinutes = parseClockToMinutes(daySchedule.close);
+    if (openMinutes === null || closeMinutes === null || closeMinutes <= openMinutes) {
+      return true;
+    }
+
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    return nowMinutes >= closeMinutes;
+  }, [selectedBarber, nowTick]);
+
   const calendarDays = useMemo(() => {
-    const startDate = new Date();
+    const startDate = new Date(nowTick);
     startDate.setHours(0, 0, 0, 0);
+    if (shouldHideTodayForBarber) {
+      startDate.setDate(startDate.getDate() + 1);
+    }
 
-    return Array.from({ length: 5 }, (_, index) => {
-      const currentDate = new Date(startDate);
-      currentDate.setDate(startDate.getDate() + index);
+    const days = [];
+    let cursor = new Date(startDate);
+    let guard = 0;
 
+    while (days.length < 7 && guard < 21) {
+      if (isBarberOpenOnDate(selectedBarber, cursor)) {
+        days.push(new Date(cursor));
+      }
+      cursor.setDate(cursor.getDate() + 1);
+      guard += 1;
+    }
+
+    if (days.length === 0) {
+      days.push(new Date(startDate));
+    }
+
+    return days.map((currentDate) => {
       return {
         value: toLocalDateInput(currentDate),
         dayName: new Intl.DateTimeFormat('tr-TR', { weekday: 'short' }).format(currentDate),
@@ -188,7 +329,16 @@ const loadBarbers = async () => {
         dayNumber: new Intl.DateTimeFormat('tr-TR', { day: '2-digit' }).format(currentDate),
       };
     });
-  }, []);
+  }, [selectedBarber, nowTick, shouldHideTodayForBarber, isBarberOpenOnDate]);
+
+  useEffect(() => {
+    if (!selectedDate || calendarDays.some((day) => day.value === selectedDate)) {
+      return;
+    }
+    const nextDate = calendarDays[0]?.value || '';
+    setSelectedDate(nextDate);
+    setSelectedSlot(null);
+  }, [calendarDays, selectedDate]);
 
   const selectedDateLabel = selectedDate
     ? new Intl.DateTimeFormat('tr-TR', { weekday: 'long', day: '2-digit', month: 'long' }).format(new Date(`${selectedDate}T00:00:00`))
@@ -200,7 +350,13 @@ const loadBarbers = async () => {
 
     if (dateValue) {
       try {
-        const res = await api.get('/slots/available', { params: { barberId: selectedBarber._id, date: dateValue } });
+        const res = await api.get('/slots/available', {
+          params: {
+            barberId: selectedBarber._id,
+            date: dateValue,
+            masterId: selectedMasterId || undefined,
+          }
+        });
         const incomingSlots = Array.isArray(res.data.data) ? res.data.data : [];
         setAvailableSlots(incomingSlots);
       } catch (err) {
@@ -214,6 +370,14 @@ const loadBarbers = async () => {
       setAvailableSlots([]);
     }
   };
+
+  useEffect(() => {
+    if (!selectedDate || !selectedBarber) {
+      return;
+    }
+
+    handleDateSelect(selectedDate);
+  }, [selectedMasterId]);
 
   const currentStep = (() => {
     if (!city || !district) return 1;
@@ -304,6 +468,7 @@ const loadBarbers = async () => {
     setBarbers([]);
     setBarbersFetched(false);
     setSelectedBarber(null);
+    setSelectedMasterId('');
     loadDistricts(e.target.value);
   }}>
   <option value="">İl seçin...</option>
@@ -321,6 +486,7 @@ const loadBarbers = async () => {
     setBarbers([]);
     setBarbersFetched(false);
     setSelectedBarber(null);
+    setSelectedMasterId('');
   }}>
     <option value="">İlçe seçin...</option>
     {districts.map(d => <option key={d} value={d}>{d}</option>)}
@@ -361,6 +527,7 @@ const loadBarbers = async () => {
               onClick={() => {
                 setSelectedBarber(barber);
                 setSelectedService(null);
+                setSelectedMasterId('');
                 setServiceDropdownOpen(false);
                 setSelectedDate('');
                 setSelectedSlot(null);
@@ -469,6 +636,26 @@ const loadBarbers = async () => {
               <div className="booking-info-note">
                 Bu salonda henüz tanımlı hizmet bulunmuyor.
               </div>
+            )}
+          </div>
+
+          <div className="mb-3">
+            <label className="form-label">Usta Seçin</label>
+            {activeMasters.length > 0 ? (
+              <select
+                className="form-select"
+                value={selectedMasterId}
+                onChange={(e) => setSelectedMasterId(e.target.value)}
+              >
+                <option value="">Farketmez (salon belirlesin)</option>
+                {activeMasters.map((master) => (
+                  <option key={master._id} value={master._id}>
+                    {master.name}{master.specialty ? ` - ${master.specialty}` : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="booking-info-note">Bu salon için aktif usta tanımlı değil.</div>
             )}
           </div>
 
@@ -590,6 +777,7 @@ const loadBarbers = async () => {
           <div className="small text-muted mb-2">Randevu özetini kontrol et ve işlemi tamamla.</div>
           <div className="booking-step4-card">
             <div className="booking-summary-item"><span>Salon</span><strong>{selectedBarber?.salonName || selectedBarber?.name || '-'}</strong></div>
+            <div className="booking-summary-item"><span>Usta</span><strong>{selectedMaster?.name || 'Farketmez'}</strong></div>
             <div className="booking-summary-item"><span>Hizmet</span><strong>{selectedService?.name || '-'}</strong></div>
             <div className="booking-summary-item"><span>Tarih / Saat</span><strong>{selectedDate} {selectedSlot?.time}</strong></div>
             <div className="booking-summary-item booking-summary-total"><span>Tutar</span><strong>{selectedPrice > 0 ? `₺${selectedPrice}` : 'Seçilmedi'}</strong></div>
@@ -616,6 +804,10 @@ const loadBarbers = async () => {
             <div className="booking-summary-item">
               <span>Salon</span>
               <strong>{selectedBarber?.salonName || selectedBarber?.name || '-'}</strong>
+            </div>
+            <div className="booking-summary-item">
+              <span>Usta</span>
+              <strong>{selectedMaster?.name || 'Farketmez'}</strong>
             </div>
             <div className="booking-summary-item">
               <span>Hizmet</span>
@@ -676,6 +868,7 @@ const loadBarbers = async () => {
               <div className="modal-body">
                 <p>Randevu: {selectedDate} {selectedSlot?.time}</p>
                 <p>Berber: {selectedBarber?.name}</p>
+                <p>Usta: {selectedMaster?.name || 'Farketmez'}</p>
                 <p>Kapora: <strong>100 TL</strong></p>
                 {paymentStatus === null && (
                   <>

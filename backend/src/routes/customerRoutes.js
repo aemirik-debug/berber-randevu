@@ -269,6 +269,12 @@ router.patch('/appointments/:id/:appointmentId/reschedule', authMiddleware, asyn
       return res.status(400).json({ message: 'Sadece aynı berberin slotlarına taşınabilir' });
     }
 
+    const currentMasterId = String(appointment?.assignedMaster?.masterId || '');
+    const targetMasterId = String(targetSlot?.assignedMaster?.masterId || '');
+    if (currentMasterId !== targetMasterId) {
+      return res.status(400).json({ message: 'Randevu sadece aynı ustanın takvimine taşınabilir' });
+    }
+
     if (appointment.slotId) {
       const oldSlot = await Slot.findById(appointment.slotId);
       if (oldSlot) {
@@ -303,6 +309,7 @@ router.patch('/appointments/:id/:appointmentId/reschedule', authMiddleware, asyn
     appointment.barberName = targetSlot.barber?.name || appointment.barberName;
     appointment.date = targetSlot.date;
     appointment.time = targetSlot.time;
+    appointment.assignedMaster = targetSlot.assignedMaster || null;
     appointment.status = 'Randevu Alındı';
     appointment.createdAt = new Date();
     appointment.reminderSentAt = null;
@@ -460,7 +467,13 @@ router.post('/favorites/:id', authMiddleware, async (req, res) => {
   try {
     if (!ensureCustomerAccess(req, res)) return;
 
-    const { barberId, barberName, district, phone } = req.body;
+    const { barberId, barberName, city, district, phone } = req.body;
+    const normalizedCity = String(city || '').trim();
+    const normalizedDistrict = String(district || '').trim();
+
+    if (!normalizedCity || !normalizedDistrict) {
+      return res.status(400).json({ message: 'Favori kaydında il ve ilçe birlikte zorunludur' });
+    }
     const customer = await Customer.findById(req.params.id);
     if (!customer) {
       return res.status(404).json({ message: 'Müşteri bulunamadı' });
@@ -471,7 +484,7 @@ router.post('/favorites/:id', authMiddleware, async (req, res) => {
       return res.status(400).json({ message: 'Bu berber zaten favorilerde' });
     }
 
-    const favorite = { barberId, barberName, district, phone };
+    const favorite = { barberId, barberName, city: normalizedCity, district: normalizedDistrict, phone };
     customer.favorites.push(favorite);
     await customer.save();
 

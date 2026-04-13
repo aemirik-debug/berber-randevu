@@ -8,6 +8,128 @@ const moment = require('moment');
 // Moment.js'i English locale'e ayarla
 moment.locale('en');
 
+function isMasterUser(req) {
+  return String(req.user?.role || '').toLowerCase() === 'master' && Boolean(req.masterId);
+}
+
+function buildMasterScopedQuery(req, query = {}) {
+  const scopedQuery = { ...(query || {}) };
+  if (isMasterUser(req)) {
+    const unassignedCondition = {
+      $or: [
+        { assignedMaster: { $exists: false } },
+        { assignedMaster: null },
+        { 'assignedMaster.masterId': { $in: ['', null] } },
+      ],
+    };
+
+    scopedQuery.$or = [
+      { 'assignedMaster.masterId': String(req.masterId) },
+      {
+        $and: [
+          unassignedCondition,
+          { status: { $in: ['available', 'blocked'] } },
+        ],
+      },
+    ];
+  }
+  return scopedQuery;
+}
+
+function buildSameAssignedMasterFilter(masterInfo) {
+  const masterId = String(masterInfo?.masterId || '').trim();
+  if (masterId) {
+    return { 'assignedMaster.masterId': masterId };
+  }
+
+  return {
+    $or: [
+      { assignedMaster: { $exists: false } },
+      { assignedMaster: null },
+      { 'assignedMaster.masterId': { $in: ['', null] } },
+    ],
+  };
+}
+
+function ensureMasterCanAccessSlot(req, slot) {
+  if (!isMasterUser(req)) {
+    return false;
+  }
+  return String(slot?.assignedMaster?.masterId || '') === String(req.masterId || '');
+}
+
+function toMasterDto(master) {
+  if (!master) {
+    return null;
+  }
+  return {
+    masterId: String(master._id),
+    name: master.name,
+    username: master.username,
+  };
+}
+
+function normalizePositivePrice(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function resolveCatalogService(barber, { serviceId, serviceName }) {
+  const services = Array.isArray(barber?.services) ? barber.services : [];
+  const normalizedName = String(serviceName || '').trim().toLowerCase();
+
+  if (serviceId) {
+    let byId = null;
+    if (typeof services.id === 'function') {
+      try {
+        byId = services.id(serviceId);
+      } catch (_) {
+        byId = null;
+      }
+    }
+    if (!byId) {
+      byId = services.find((item) => String(item?._id || '') === String(serviceId)) || null;
+    }
+    if (byId) {
+      return byId;
+    }
+  }
+
+  if (normalizedName) {
+    return services.find((item) => String(item.name || '').trim().toLowerCase() === normalizedName) || null;
+  }
+
+  return null;
+}
+
+function resolveSlotPrice(serviceRecord, providedPrice) {
+  return normalizePositivePrice(providedPrice) ?? normalizePositivePrice(serviceRecord?.price) ?? 0;
+}
+
+async function resolveAssignedMasterForRequest({ req, barber, requestedMasterId }) {
+  if (isMasterUser(req)) {
+    const selfMaster = (barber.masters || []).find((item) => String(item._id) === String(req.masterId));
+    if (!selfMaster || selfMaster.isActive === false) {
+      throw new Error('Usta hesabı aktif değil veya bulunamadı');
+    }
+    return toMasterDto(selfMaster);
+  }
+
+  if (!requestedMasterId) {
+    return null;
+  }
+
+  const targetMaster = (barber.masters || []).find((item) => String(item._id) === String(requestedMasterId));
+  if (!targetMaster) {
+    throw new Error('Seçilen usta bulunamadı');
+  }
+  if (targetMaster.isActive === false) {
+    throw new Error('Seçilen usta pasif durumda');
+  }
+
+  return toMasterDto(targetMaster);
+}
+
 function getNowDateTimeParts() {
   const now = new Date();
   return {
@@ -37,6 +159,21 @@ function isPastDateTime(dateStr, timeStr) {
   return time <= nowTime;
 }
 
+function hasOneHourPassedSinceSlot(dateStr, timeStr) {
+  const date = String(dateStr || '').trim();
+  const time = String(timeStr || '').trim().slice(0, 5);
+  if (!date || !/^([01]\d|2[0-3]):([0-5]\d)$/.test(time)) {
+    return false;
+  }
+
+  const slotMoment = moment(`${date} ${time}`, 'YYYY-MM-DD HH:mm', true);
+  if (!slotMoment.isValid()) {
+    return false;
+  }
+
+  return moment().diff(slotMoment, 'minutes') >= 60;
+}
+
 async function pushAppointmentToCustomer({ customerId, customerPhone, appointment }) {
   const Customer = require('../models/Customer');
 
@@ -60,19 +197,26 @@ async function pushAppointmentToCustomer({ customerId, customerPhone, appointmen
 
 function buildCustomerAppointment(slot, extra = {}) {
   const barberId = slot.barber?._id ? String(slot.barber._id) : String(slot.barber || '');
+  const resolvedPrice = Number(extra.servicePrice ?? slot?.payment?.amount ?? slot?.manualPrice ?? slot?.service?.price ?? slot?.customer?.totalPrice ?? 0) || 0;
+  const resolvedDuration = Number(extra.serviceDuration ?? slot?.service?.duration ?? 30) || 30;
+  const resolvedSalonName = String(extra.salonName || slot.barber?.salonName || '').trim();
 
   return {
     slotId: String(slot._id),
     barberId,
     barberName: slot.barber?.name || extra.barberName || '',
+    barberSalonName: resolvedSalonName,
+    barberCity: String(extra.barberCity || slot.barber?.city || '').trim(),
+    barberDistrict: String(extra.barberDistrict || slot.barber?.district || '').trim(),
     date: slot.date,
     time: slot.time,
     service: {
       name: extra.serviceName || (slot.customer && slot.customer.service) || 'Belirtilmemiş',
-      price: 0,
-      duration: 30
+      price: resolvedPrice,
+      duration: resolvedDuration
     },
     status: extra.status || 'Randevu Alındı',
+    assignedMaster: extra.assignedMaster || slot.assignedMaster || null,
     createdAt: extra.createdAt || new Date(),
     reminderSentAt: extra.reminderSentAt || null
   };
@@ -82,6 +226,9 @@ function toCustomerStatus(slotStatus) {
   const statusLc = String(slotStatus || '').toLowerCase();
   if (statusLc === 'confirmed') {
     return 'confirmed';
+  }
+  if (statusLc === 'completed') {
+    return 'completed';
   }
   if (statusLc === 'cancelled') {
     return 'cancelled';
@@ -120,7 +267,7 @@ router.get('/debug/stats', auth, async (req, res) => {
 // Belirli tarihteki slotları getir (Müşteri için)
 router.get('/available', async (req, res) => {
   try {
-    const { barberId, date } = req.query;
+    const { barberId, date, masterId } = req.query;
     
     if (!barberId || !date) {
       return res.status(400).json({ success: false, error: 'barberId ve date gerekli' });
@@ -140,11 +287,26 @@ router.get('/available', async (req, res) => {
       });
     }
 
-    const slots = await Slot.find({
+    const baseQuery = {
       barber: barberId,
       date: date,
       status: 'available'
-    }).sort({ time: 1 });
+    };
+
+    let slotsQuery = baseQuery;
+    if (String(masterId || '').trim()) {
+      slotsQuery = {
+        ...baseQuery,
+        $or: [
+          { 'assignedMaster.masterId': String(masterId).trim() },
+          { assignedMaster: { $exists: false } },
+          { assignedMaster: null },
+          { 'assignedMaster.masterId': { $in: ['', null] } },
+        ],
+      };
+    }
+
+    const slots = await Slot.find(slotsQuery).sort({ time: 1 });
 
     res.json({
       success: true,
@@ -157,15 +319,23 @@ router.get('/available', async (req, res) => {
   }
 });
 
-// berber tarafından dolu slotlar için onay/iptal işlemi
+// berber tarafından dolu/onaylı slotlar için onay/iptal/tamamlama işlemi
 router.patch('/:slotId/action', auth, checkFeature('calendarBooking'), async (req, res) => {
   try {
-    const { action, reason } = req.body; // 'confirm' veya 'cancel'
+    const { action, reason } = req.body; // 'confirm', 'cancel' veya 'complete'
     const slot = await Slot.findOne({ _id: req.params.slotId, barber: req.barberId });
     if (!slot) return res.status(404).json({ success: false, error: 'Slot bulunamadı' });
 
-    if (slot.status !== 'booked') {
-      return res.status(400).json({ success: false, error: 'Sadece dolu slotlar üzerinde işlem yapılabilir' });
+    if (!ensureMasterCanAccessSlot(req, slot)) {
+      return res.status(403).json({ success: false, error: 'Bu randevu üzerinde yetkiniz yok' });
+    }
+
+    const slotStatus = String(slot.status || '').toLowerCase();
+
+    if (action === 'cancel' || action === 'confirm') {
+      if (slotStatus !== 'booked') {
+        return res.status(400).json({ success: false, error: 'Sadece dolu slotlar üzerinde işlem yapılabilir' });
+      }
     }
 
     if (action === 'cancel') {
@@ -176,41 +346,49 @@ router.patch('/:slotId/action', auth, checkFeature('calendarBooking'), async (re
       slot.cancelReason = reason || '';
     } else if (action === 'confirm') {
       slot.status = 'confirmed';
+      slot.cancelReason = '';
+    } else if (action === 'complete') {
+      if (slotStatus !== 'confirmed') {
+        return res.status(400).json({ success: false, error: 'Sadece onaylı randevular tamamlanabilir' });
+      }
+      if (!hasOneHourPassedSinceSlot(slot.date, slot.time)) {
+        return res.status(400).json({ success: false, error: 'Tamamlama işlemi için randevu saatinin üzerinden en az 1 saat geçmeli' });
+      }
+      slot.status = 'completed';
+      slot.cancelReason = '';
     } else {
       return res.status(400).json({ success: false, error: 'Geçersiz işlem' });
     }
     await slot.save();
-    // Eğer müşteri kayıtlıysa Customer.appointments dizisine ekle
-    if (req.body.customerId) {
-      const Customer = require('../models/Customer');
-      try {
-        const updateRes = await Customer.findByIdAndUpdate(req.body.customerId, {
-          $push: {
-            appointments: buildCustomerAppointment(slot, {
-              serviceName: req.body.service || (slot.customer && slot.customer.service) || 'Belirtilmemiş'
-            })
-          }
-        });
-        console.log('Customer appointment push result for', req.body.customerId, updateRes ? 'ok' : 'not-found');
-      } catch (e) {
-        console.warn('Customer appointment push failed:', e.message);
-      }
-    }
-    
     // müşteri randevusunu güncelle
     if (slot.customer?.customerId) {
       const Customer = require('../models/Customer');
-      await Customer.updateOne(
-        { _id: slot.customer.customerId, 'appointments.date': slot.date, 'appointments.time': slot.time },
-        {
-          $set: {
-            'appointments.$.status': action === 'cancel' ? 'cancelled' : 'confirmed',
-            'appointments.$.cancelReason': action === 'cancel'
-              ? (reason || 'Berber iptal etti')
-              : '',
-          }
+      const nextCustomerStatus = action === 'cancel'
+        ? 'cancelled'
+        : action === 'complete'
+          ? 'completed'
+          : 'confirmed';
+
+      const updatePayload = {
+        $set: {
+          'appointments.$.status': nextCustomerStatus,
+          'appointments.$.cancelReason': action === 'cancel'
+            ? (reason || 'Berber iptal etti')
+            : '',
         }
+      };
+
+      const updateBySlotId = await Customer.updateOne(
+        { _id: slot.customer.customerId, 'appointments.slotId': String(slot._id) },
+        updatePayload
       );
+
+      if (!updateBySlotId?.matchedCount) {
+        await Customer.updateOne(
+          { _id: slot.customer.customerId, 'appointments.date': slot.date, 'appointments.time': slot.time },
+          updatePayload
+        );
+      }
     }
 
     // socket bildirim
@@ -268,6 +446,10 @@ router.patch('/:slotId/reschedule', auth, checkFeature('calendarBooking'), async
       return res.status(404).json({ success: false, error: 'Randevu bulunamadı' });
     }
 
+    if (!ensureMasterCanAccessSlot(req, slot)) {
+      return res.status(403).json({ success: false, error: 'Bu randevu üzerinde yetkiniz yok' });
+    }
+
     if (!['booked', 'confirmed'].includes(String(slot.status || '').toLowerCase())) {
       return res.status(400).json({ success: false, error: 'Sadece bekleyen veya onaylı randevular düzenlenebilir' });
     }
@@ -285,7 +467,8 @@ router.patch('/:slotId/reschedule', auth, checkFeature('calendarBooking'), async
       barber: req.barberId,
       date: targetDate,
       time: targetTime,
-      _id: { $ne: slot._id }
+      _id: { $ne: slot._id },
+      ...buildSameAssignedMasterFilter(slot.assignedMaster),
     });
 
     if (clashSlot) {
@@ -384,6 +567,10 @@ router.patch('/:slotId/reschedule/finalize', auth, checkFeature('calendarBooking
     }
 
     const slot = await Slot.findOne({ _id: req.params.slotId, barber: req.barberId });
+        if (!ensureMasterCanAccessSlot(req, slot)) {
+          return res.status(403).json({ success: false, error: 'Bu randevu üzerinde yetkiniz yok' });
+        }
+
     if (!slot) {
       return res.status(404).json({ success: false, error: 'Randevu bulunamadı' });
     }
@@ -480,8 +667,48 @@ router.patch('/:slotId/reschedule/finalize', auth, checkFeature('calendarBooking
 router.get('/my-slots', auth, checkFeature('calendarBooking'), async (req, res) => {
   try {
     const { date, startDate, endDate } = req.query;
+
+    // Geriye dönük düzeltme: Eski akışta isHidden=true olarak kalan manuel randevular
+    // listede görünmüyordu. Bunları bir kez müsait slota çevirip görünür hale getir.
+    await Slot.updateMany(
+      {
+        barber: req.barberId,
+        isHidden: true,
+        isManualAppointment: true,
+      },
+      {
+        $set: {
+          status: 'available',
+          customer: null,
+          service: null,
+          manualPrice: null,
+          payment: { isPaid: false, amount: 0 },
+          cancelReason: '',
+          isManualAppointment: false,
+          isHistoricalRecord: false,
+          isHidden: false,
+          hiddenAt: null,
+          hiddenBy: null,
+          hiddenSnapshot: null,
+          rescheduleApproval: {
+            phase: 'idle',
+            previousStatus: '',
+            oldDate: '',
+            oldTime: '',
+            proposedDate: '',
+            proposedTime: '',
+            customerDecision: 'pending',
+            barberDecision: 'pending',
+            requestedBy: 'barber',
+            requestedAt: null,
+            customerRespondedAt: null,
+            barberRespondedAt: null,
+          }
+        }
+      }
+    );
     
-    let query = { barber: req.barberId, isHidden: { $ne: true } };
+    let query = buildMasterScopedQuery(req, { barber: req.barberId, isHidden: { $ne: true } });
     
     if (date) {
       query.date = date;
@@ -498,16 +725,110 @@ router.get('/my-slots', auth, checkFeature('calendarBooking'), async (req, res) 
       console.log(`   İlk slot: ${slots[0].date} ${slots[0].time}, Son slot: ${slots[slots.length-1].date} ${slots[slots.length-1].time}`);
     }
     
-    // Barber bilgisini al (service bilgileri için)
     const barber = await Barber.findById(req.barberId);
+
+    let slotsForResponse = slots;
+    if (isMasterUser(req)) {
+      const ownOccupiedKeys = new Set(
+        slots
+          .filter((slot) => {
+            const statusLc = String(slot.status || '').toLowerCase();
+            const hasCustomer = Boolean(slot.customer?.name || slot.customerName);
+            const isOwnAssigned = String(slot?.assignedMaster?.masterId || '') === String(req.masterId || '');
+            return isOwnAssigned && hasCustomer && !['available', 'blocked'].includes(statusLc);
+          })
+          .map((slot) => `${slot.date}|${slot.time}`)
+      );
+
+      if (ownOccupiedKeys.size > 0) {
+        slotsForResponse = slots.filter((slot) => {
+          const statusLc = String(slot.status || '').toLowerCase();
+          const isUnassigned = !slot.assignedMaster || !String(slot.assignedMaster.masterId || '').trim();
+          const isGeneralAvailability = isUnassigned && ['available', 'blocked'].includes(statusLc);
+          if (!isGeneralAvailability) {
+            return true;
+          }
+
+          return !ownOccupiedKeys.has(`${slot.date}|${slot.time}`);
+        });
+      }
+
+      if (date) {
+        const selectedMoment = moment(date, 'YYYY-MM-DD', true);
+        if (selectedMoment.isValid()) {
+          const dayName = selectedMoment.format('dddd').toLowerCase();
+          const dayConfig = barber?.workingHours?.[dayName];
+          const isOpen = dayConfig && (dayConfig.isOpen === true || String(dayConfig.isOpen).toLowerCase() === 'true');
+
+          if (isOpen) {
+            const openTime = moment(String(dayConfig.open || ''), 'HH:mm', true);
+            const closeTime = moment(String(dayConfig.close || ''), 'HH:mm', true);
+
+            if (openTime.isValid() && closeTime.isValid() && openTime.isBefore(closeTime)) {
+              const existingTimeSet = new Set(
+                slotsForResponse
+                  .filter((slot) => String(slot.date || '') === String(date))
+                  .map((slot) => String(slot.time || '').slice(0, 5))
+              );
+
+              let cursor = openTime.clone();
+              while (cursor.isBefore(closeTime)) {
+                const timeStr = cursor.format('HH:mm');
+                if (!existingTimeSet.has(timeStr)) {
+                  slotsForResponse.push({
+                    _id: `virtual-${date}-${timeStr}-${req.masterId}`,
+                    barber: req.barberId,
+                    date: String(date),
+                    time: timeStr,
+                    status: 'available',
+                    customer: null,
+                    service: null,
+                    manualPrice: null,
+                    payment: { isPaid: false, amount: 0 },
+                    assignedMaster: { masterId: String(req.masterId) },
+                    isManualAppointment: false,
+                    isHistoricalRecord: false,
+                    isVirtualSlot: true,
+                  });
+                  existingTimeSet.add(timeStr);
+                }
+                cursor.add(30, 'minutes');
+              }
+
+              slotsForResponse = slotsForResponse.sort((a, b) => {
+                const dateCompare = String(a.date || '').localeCompare(String(b.date || ''));
+                if (dateCompare !== 0) {
+                  return dateCompare;
+                }
+                return String(a.time || '').localeCompare(String(b.time || ''));
+              });
+            }
+          }
+        }
+      }
+
+    }
+
+    // Barber bilgisini al (service bilgileri için)
     const barberServices = Array.isArray(barber?.services) ? barber.services : [];
     
-    const enrichedSlots = slots.map(slot => {
+    const enrichedSlots = slotsForResponse.map(slot => {
       let serviceInfo = null;
+      const fallbackServicePrice = Number(slot?.payment?.amount || slot?.customer?.totalPrice || slot?.manualPrice || 0) || 0;
       
       // Eğer slot.service varsa (manuel oluşturulan randevular için)
       if (slot.service && barberServices.length > 0) {
-        const service = barberServices.id(slot.service);
+        let service = null;
+        if (typeof barberServices.id === 'function') {
+          try {
+            service = barberServices.id(slot.service);
+          } catch (_) {
+            service = null;
+          }
+        }
+        if (!service) {
+          service = barberServices.find((item) => String(item?._id || '') === String(slot.service)) || null;
+        }
         if (service) {
           serviceInfo = {
             _id: service._id,
@@ -529,8 +850,15 @@ router.get('/my-slots', auth, checkFeature('calendarBooking'), async (req, res) 
         customerPhone: slot.customer?.phone || null,
         customer: slot.customer || null,
         service: serviceInfo || (slot.customer?.service ? { name: slot.customer.service } : null),
-        manualPrice: slot.manualPrice,
-        payment: slot.payment,
+        manualPrice: slot.manualPrice !== null && typeof slot.manualPrice !== 'undefined'
+          ? slot.manualPrice
+          : (serviceInfo?.price ?? fallbackServicePrice),
+        payment: {
+          ...(slot.payment || {}),
+          amount: Number(slot.payment?.amount || 0) || (serviceInfo?.price ?? fallbackServicePrice),
+        },
+        assignedMaster: slot.assignedMaster || null,
+        isVirtualSlot: Boolean(slot.isVirtualSlot),
         cancelReason: slot.cancelReason,
         isManualAppointment: slot.isManualAppointment || false
       };
@@ -553,6 +881,17 @@ router.post('/', auth, checkFeature('calendarBooking'), async (req, res) => {
   try {
     const { date, time, customer } = req.body;
 
+    const barber = await Barber.findById(req.barberId);
+    if (!barber) {
+      return res.status(404).json({ success: false, error: 'Berber bulunamadı' });
+    }
+
+    const assignedMaster = await resolveAssignedMasterForRequest({
+      req,
+      barber,
+      requestedMasterId: req.body?.assignedMasterId,
+    });
+
     if (isPastDateTime(date, time)) {
       return res.status(400).json({ success: false, error: 'Geçmiş saat için slot oluşturulamaz' });
     }
@@ -561,7 +900,8 @@ router.post('/', auth, checkFeature('calendarBooking'), async (req, res) => {
     const existing = await Slot.findOne({
       barber: req.barberId,
       date,
-      time
+      time,
+      ...buildSameAssignedMasterFilter(assignedMaster),
     });
     
     if (existing) {
@@ -573,7 +913,8 @@ router.post('/', auth, checkFeature('calendarBooking'), async (req, res) => {
       date,
       time,
       status: customer ? 'booked' : 'available',
-      customer: customer || undefined
+      customer: customer || undefined,
+      assignedMaster: assignedMaster || undefined,
     });
 
     await slot.save();
@@ -609,6 +950,17 @@ router.post('/generate-custom', auth, checkFeature('calendarBooking'), async (re
   try {
     const { date, start, end, slotDuration } = req.body;
     const moment = require('moment');
+
+    const barber = await Barber.findById(req.barberId).select('masters');
+    if (!barber) {
+      return res.status(404).json({ success: false, error: 'Berber bulunamadı' });
+    }
+
+    const assignedMaster = await resolveAssignedMasterForRequest({
+      req,
+      barber,
+      requestedMasterId: req.body?.assignedMasterId,
+    });
     
     const slots = [];
     let currentTime = moment(start, 'HH:mm');
@@ -620,7 +972,8 @@ router.post('/generate-custom', auth, checkFeature('calendarBooking'), async (re
       const existing = await Slot.findOne({
         barber: req.barberId,
         date: date,
-        time: timeStr
+        time: timeStr,
+        ...buildSameAssignedMasterFilter(assignedMaster),
       });
       
       if (!existing) {
@@ -628,7 +981,8 @@ router.post('/generate-custom', auth, checkFeature('calendarBooking'), async (re
           barber: req.barberId,
           date: date,
           time: timeStr,
-          status: 'available'
+          status: 'available',
+          assignedMaster: assignedMaster || undefined,
         });
       }
       
@@ -656,6 +1010,15 @@ router.post('/generate', auth, checkFeature('calendarBooking'), async (req, res)
     const { startDate, endDate } = req.body; // "2026-02-22", "2026-02-28"
     
     const barber = await Barber.findById(req.barberId);
+    if (!barber) {
+      return res.status(404).json({ success: false, error: 'Berber bulunamadı' });
+    }
+
+    const assignedMaster = await resolveAssignedMasterForRequest({
+      req,
+      barber,
+      requestedMasterId: req.body?.assignedMasterId,
+    });
     const slots = [];
     
     // Tarih aralığındaki her gün için
@@ -680,7 +1043,8 @@ router.post('/generate', auth, checkFeature('calendarBooking'), async (req, res)
           const existing = await Slot.findOne({
             barber: req.barberId,
             date: current.format('YYYY-MM-DD'),
-            time: timeStr
+            time: timeStr,
+            ...buildSameAssignedMasterFilter(assignedMaster),
           });
           
           if (!existing) {
@@ -688,7 +1052,8 @@ router.post('/generate', auth, checkFeature('calendarBooking'), async (req, res)
               barber: req.barberId,
               date: current.format('YYYY-MM-DD'),
               time: timeStr,
-              status: 'available'
+              status: 'available',
+              assignedMaster: assignedMaster || undefined,
             });
           }
           
@@ -727,6 +1092,10 @@ router.patch('/:slotId/status', auth, checkFeature('calendarBooking'), async (re
       return res.status(404).json({ success: false, error: 'Slot bulunamadı' });
     }
 
+    if (!ensureMasterCanAccessSlot(req, slot)) {
+      return res.status(403).json({ success: false, error: 'Bu slot üzerinde yetkiniz yok' });
+    }
+
     // Sistemden dolu (booked) ise değiştirme
     if (slot.status === 'booked') {
       return res.status(400).json({ success: false, error: 'Sistem randevusu değiştirilemez' });
@@ -734,6 +1103,30 @@ router.patch('/:slotId/status', auth, checkFeature('calendarBooking'), async (re
 
     slot.status = status;
     await slot.save();
+
+    if (slot.customer?.customerId) {
+      const Customer = require('../models/Customer');
+      const nextCustomerStatus = toCustomerStatus(slot.status);
+      const updateRes = await Customer.updateOne(
+        { _id: slot.customer.customerId, 'appointments.slotId': String(slot._id) },
+        {
+          $set: {
+            'appointments.$.status': nextCustomerStatus,
+          }
+        }
+      );
+
+      if (!updateRes?.matchedCount) {
+        await Customer.updateOne(
+          { _id: slot.customer.customerId, 'appointments.date': slot.date, 'appointments.time': slot.time },
+          {
+            $set: {
+              'appointments.$.status': nextCustomerStatus,
+            }
+          }
+        );
+      }
+    }
     
     res.json({ success: true, data: slot });
     
@@ -751,19 +1144,58 @@ router.delete('/:slotId', auth, checkFeature('calendarBooking'), async (req, res
       return res.status(404).json({ success: false, error: 'Randevu bulunamadı' });
     }
 
+    if (!ensureMasterCanAccessSlot(req, slot)) {
+      return res.status(403).json({ success: false, error: 'Bu randevu üzerinde yetkiniz yok' });
+    }
+
     if (!slot.isManualAppointment) {
       return res.status(403).json({ success: false, error: 'Sadece manuel oluşturduğunuz randevuları gizleyebilirsiniz' });
     }
 
-    if (slot.isHistoricalRecord) {
-      return res.status(400).json({ success: false, error: 'Tarihi kayıtlar gizlenemez' });
-    }
-
-    if (isPastDateTime(slot.date, slot.time)) {
+    if (isPastDateTime(slot.date, slot.time) && !slot.isHistoricalRecord) {
       return res.status(400).json({ success: false, error: 'Geçmiş randevular gizlenemez' });
     }
 
-    slot.isHidden = true;
+    const slotSnapshot = slot.toObject({ depopulate: true });
+
+    // Slotu listeden kaldırmak yerine müsait hale çevir; böylece saat aralığı kaybolmaz.
+    slot.hiddenSnapshot = {
+      status: slotSnapshot.status,
+      customer: slotSnapshot.customer ? { ...slotSnapshot.customer } : null,
+      assignedMaster: slotSnapshot.assignedMaster ? { ...slotSnapshot.assignedMaster } : null,
+      service: slotSnapshot.service || null,
+      manualPrice: slotSnapshot.manualPrice ?? null,
+      payment: slotSnapshot.payment ? { ...slotSnapshot.payment } : { isPaid: false, amount: 0 },
+      cancelReason: slotSnapshot.cancelReason || '',
+      isManualAppointment: Boolean(slotSnapshot.isManualAppointment),
+      isHistoricalRecord: Boolean(slotSnapshot.isHistoricalRecord),
+      rescheduleApproval: slotSnapshot.rescheduleApproval ? { ...slotSnapshot.rescheduleApproval } : null,
+    };
+
+    slot.status = 'available';
+    slot.customer = undefined;
+    slot.service = undefined;
+    slot.manualPrice = null;
+    slot.payment = { isPaid: false, amount: 0 };
+    slot.cancelReason = '';
+    slot.isManualAppointment = false;
+    slot.isHistoricalRecord = false;
+    slot.rescheduleApproval = {
+      phase: 'idle',
+      previousStatus: '',
+      oldDate: '',
+      oldTime: '',
+      proposedDate: '',
+      proposedTime: '',
+      customerDecision: 'pending',
+      barberDecision: 'pending',
+      requestedBy: 'barber',
+      requestedAt: null,
+      customerRespondedAt: null,
+      barberRespondedAt: null,
+    };
+
+    slot.isHidden = false;
     slot.hiddenAt = new Date();
     slot.hiddenBy = req.barberId;
     await slot.save();
@@ -788,13 +1220,47 @@ router.patch('/:slotId/restore', auth, checkFeature('calendarBooking'), async (r
       return res.status(404).json({ success: false, error: 'Randevu bulunamadı' });
     }
 
-    if (!slot.isManualAppointment) {
-      return res.status(403).json({ success: false, error: 'Sadece manuel oluşturduğunuz randevuları geri alabilirsiniz' });
+    if (!ensureMasterCanAccessSlot(req, slot)) {
+      return res.status(403).json({ success: false, error: 'Bu randevu üzerinde yetkiniz yok' });
     }
+
+    if (!slot.hiddenSnapshot) {
+      return res.status(400).json({ success: false, error: 'Bu slot için geri alınacak bir silme kaydı yok' });
+    }
+
+    const snapshot = slot.hiddenSnapshot;
+    const restoredCustomer = snapshot.customer && typeof snapshot.customer === 'object'
+      ? { ...snapshot.customer }
+      : null;
+
+    slot.customer = restoredCustomer || undefined;
+    slot.status = snapshot.status || (restoredCustomer ? 'booked' : 'available');
+    slot.service = snapshot.service || undefined;
+    slot.assignedMaster = snapshot.assignedMaster || undefined;
+    slot.manualPrice = typeof snapshot.manualPrice === 'number' ? snapshot.manualPrice : null;
+    slot.payment = snapshot.payment || { isPaid: false, amount: 0 };
+    slot.cancelReason = snapshot.cancelReason || '';
+    slot.isManualAppointment = Boolean(snapshot.isManualAppointment);
+    slot.isHistoricalRecord = Boolean(snapshot.isHistoricalRecord);
+    slot.rescheduleApproval = snapshot.rescheduleApproval || {
+      phase: 'idle',
+      previousStatus: '',
+      oldDate: '',
+      oldTime: '',
+      proposedDate: '',
+      proposedTime: '',
+      customerDecision: 'pending',
+      barberDecision: 'pending',
+      requestedBy: 'barber',
+      requestedAt: null,
+      customerRespondedAt: null,
+      barberRespondedAt: null,
+    };
 
     slot.isHidden = false;
     slot.hiddenAt = null;
     slot.hiddenBy = null;
+    slot.hiddenSnapshot = undefined;
     await slot.save();
 
     return res.json({
@@ -807,10 +1273,49 @@ router.patch('/:slotId/restore', auth, checkFeature('calendarBooking'), async (r
     return res.status(500).json({ success: false, error: error.message });
   }
 });
+
+// Slota usta atama / degistirme
+router.patch('/:slotId/assign-master', auth, checkFeature('calendarBooking'), async (req, res) => {
+  try {
+    if (!isMasterUser(req)) {
+      return res.status(403).json({ success: false, error: 'Bu işlem yalnızca usta hesabından yapılabilir' });
+    }
+
+    const { masterId } = req.body || {};
+    const slot = await Slot.findOne({ _id: req.params.slotId, barber: req.barberId });
+    if (!slot) {
+      return res.status(404).json({ success: false, error: 'Slot bulunamadı' });
+    }
+
+    const barber = await Barber.findById(req.barberId).select('masters');
+    if (!barber) {
+      return res.status(404).json({ success: false, error: 'Berber bulunamadı' });
+    }
+
+    if (!masterId) {
+      slot.assignedMaster = undefined;
+    } else {
+      const targetMaster = (barber.masters || []).find((item) => String(item._id) === String(masterId));
+      if (!targetMaster) {
+        return res.status(400).json({ success: false, error: 'Seçilen usta bulunamadı' });
+      }
+      if (targetMaster.isActive === false) {
+        return res.status(400).json({ success: false, error: 'Pasif usta atanamaz' });
+      }
+
+      slot.assignedMaster = toMasterDto(targetMaster);
+    }
+
+    await slot.save();
+    return res.json({ success: true, slot });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
 // Müşteri slot rezervasyonu (auth'suz, herkes kullanabilir)
 router.patch('/:slotId/book', async (req, res) => {
   try {
-    const { customerPhone, customerName, service, customerId, price } = req.body;
+    const { customerPhone, customerName, service, serviceId, customerId, price, assignedMasterId } = req.body;
     console.log('booking request body:', req.body);
     
     const slot = await Slot.findOne({
@@ -840,17 +1345,40 @@ router.patch('/:slotId/book', async (req, res) => {
       });
     }
 
+    if (assignedMasterId) {
+      const targetMaster = (slot.barber.masters || []).find((item) => String(item._id) === String(assignedMasterId));
+      if (!targetMaster) {
+        return res.status(400).json({ success: false, error: 'Seçilen usta bulunamadı' });
+      }
+      if (targetMaster.isActive === false) {
+        return res.status(400).json({ success: false, error: 'Seçilen usta pasif durumda' });
+      }
+      slot.assignedMaster = toMasterDto(targetMaster);
+    } else {
+      slot.assignedMaster = undefined;
+    }
+
+    const serviceRecord = resolveCatalogService(slot.barber, { serviceId, serviceName: service });
+    const normalizedPrice = resolveSlotPrice(serviceRecord, price);
+    const resolvedServiceName = String(serviceRecord?.name || service || 'Belirtilmemiş').trim() || 'Belirtilmemiş';
+
     slot.status = 'booked';
     slot.customer = {
       customerId: req.body.customerId || null,
       phone: customerPhone,
       name: customerName || 'İsimsiz',
-      service: service || 'Belirtilmemiş',
+      service: resolvedServiceName,
       isHomeService: false
     };
+    if (normalizedPrice > 0) {
+      slot.customer.totalPrice = normalizedPrice;
+    }
+    if (serviceRecord?._id) {
+      slot.service = serviceRecord._id;
+    }
     slot.payment = {
-      isPaid: Number(price) > 0,
-      amount: Number(price) || 0
+      isPaid: normalizedPrice > 0,
+      amount: normalizedPrice
     };
 
     await slot.save();
@@ -860,7 +1388,13 @@ router.patch('/:slotId/book', async (req, res) => {
         customerId: req.body.customerId,
         customerPhone: req.body.customerPhone,
         appointment: buildCustomerAppointment(slot, {
-          serviceName: req.body.service || (slot.customer && slot.customer.service) || 'Belirtilmemiş'
+          serviceName: resolvedServiceName,
+          servicePrice: normalizedPrice,
+          serviceDuration: Number(serviceRecord?.duration || 30) || 30,
+          salonName: slot.barber?.salonName,
+          barberCity: slot.barber?.city,
+          barberDistrict: slot.barber?.district,
+          assignedMaster: slot.assignedMaster || null,
         })
       });
       console.log('Customer appointment push result for', req.body.customerId || req.body.customerPhone, pushSuccess ? 'ok' : 'not-found');
@@ -890,17 +1424,33 @@ router.patch('/:slotId/book', async (req, res) => {
 router.post('/create-manual', auth, checkFeature('calendarBooking'), async (req, res) => {
   try {
     const { date, time, customerName, customerPhone, serviceId, price, allowPastManual } = req.body;
-    const isHistoricalRecord = Boolean(allowPastManual && isPastDateTime(date, time));
+    const normalizedDate = String(date || '').trim();
+    const normalizedTime = String(time || '').trim().slice(0, 5);
+    const isHistoricalRecord = Boolean(allowPastManual && isPastDateTime(normalizedDate, normalizedTime));
 
     // Validasyon
-    if (!date || !time || !customerName || !serviceId) {
+    if (!normalizedDate || !normalizedTime || !customerName || !serviceId) {
       return res.status(400).json({ 
         success: false, 
         error: 'Tarih, saat, müşteri adı ve hizmet zorunludur' 
       });
     }
 
-    if (isPastDateTime(date, time) && !allowPastManual) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Geçerli bir tarih giriniz (YYYY-MM-DD)'
+      });
+    }
+
+    if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(normalizedTime)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Geçerli bir saat giriniz (HH:mm)'
+      });
+    }
+
+    if (isPastDateTime(normalizedDate, normalizedTime) && !allowPastManual) {
       return res.status(400).json({
         success: false,
         error: 'Geçmiş saat için randevu oluşturulamaz'
@@ -912,17 +1462,26 @@ router.post('/create-manual', auth, checkFeature('calendarBooking'), async (req,
     if (!barber) {
       return res.status(404).json({ success: false, error: 'Berber bulunamadı' });
     }
+
+    const assignedMaster = await resolveAssignedMasterForRequest({
+      req,
+      barber,
+      requestedMasterId: req.body?.assignedMasterId,
+    });
     
     const service = barber.services.id(serviceId);
     if (!service) {
       return res.status(400).json({ success: false, error: 'Hizmet bulunamadı' });
     }
 
+    const normalizedPrice = resolveSlotPrice(service, price);
+
     // Var olan slot kontrol et
     let slot = await Slot.findOne({
       barber: req.barberId,
-      date,
-      time
+      date: normalizedDate,
+      time: normalizedTime,
+      ...buildSameAssignedMasterFilter(assignedMaster),
     });
 
     if (slot) {
@@ -940,16 +1499,21 @@ router.post('/create-manual', auth, checkFeature('calendarBooking'), async (req,
         notes: null
       };
       slot.service = serviceId;
-      slot.manualPrice = price || null;
+      slot.manualPrice = normalizedPrice;
+      slot.payment = {
+        isPaid: true,
+        amount: normalizedPrice
+      };
       slot.isManualAppointment = true;
       slot.isHistoricalRecord = isHistoricalRecord;
+      slot.assignedMaster = assignedMaster || undefined;
       await slot.save();
     } else {
       // Yeni slot oluştur
       slot = new Slot({
         barber: req.barberId,
-        date,
-        time,
+        date: normalizedDate,
+        time: normalizedTime,
         status: 'confirmed',
         customer: {
           name: customerName,
@@ -958,7 +1522,12 @@ router.post('/create-manual', auth, checkFeature('calendarBooking'), async (req,
           notes: null
         },
         service: serviceId,
-        manualPrice: price || null,
+        manualPrice: normalizedPrice,
+        payment: {
+          isPaid: true,
+          amount: normalizedPrice
+        },
+        assignedMaster: assignedMaster || undefined,
         isManualAppointment: true,
         isHistoricalRecord
       });
@@ -972,6 +1541,11 @@ router.post('/create-manual', auth, checkFeature('calendarBooking'), async (req,
       name: service.name,
       price: service.price,
       duration: service.duration
+    };
+    slotData.manualPrice = normalizedPrice;
+    slotData.payment = {
+      isPaid: true,
+      amount: normalizedPrice
     };
 
     res.status(201).json({
@@ -1067,10 +1641,6 @@ router.patch('/:slotId/edit', auth, checkFeature('calendarBooking'), async (req,
       return res.status(403).json({ success: false, error: 'Sadece manuel oluşturduğunuz randevuları düzenleyebilirsiniz' });
     }
 
-    if (slot.isHistoricalRecord) {
-      return res.status(400).json({ success: false, error: 'Tarihi kayıtlar düzenlenemez, gerekirse yeni kayıt açınız' });
-    }
-
     const targetDate = String(date || slot.date || '').trim();
     const targetTime = String(time || slot.time || '').trim();
 
@@ -1086,7 +1656,8 @@ router.patch('/:slotId/edit', auth, checkFeature('calendarBooking'), async (req,
       barber: req.barberId,
       date: targetDate,
       time: targetTime,
-      _id: { $ne: slot._id }
+      _id: { $ne: slot._id },
+      ...buildSameAssignedMasterFilter(slot.assignedMaster),
     });
 
     if (clashSlot) {
@@ -1104,6 +1675,8 @@ router.patch('/:slotId/edit', auth, checkFeature('calendarBooking'), async (req,
       return res.status(400).json({ success: false, error: 'Hizmet bulunamadı' });
     }
 
+    const normalizedPrice = resolveSlotPrice(service, price);
+
     // Slot bilgilerini güncelle
     slot.customer = slot.customer || {};
     slot.customer.name = customerName;
@@ -1112,7 +1685,12 @@ router.patch('/:slotId/edit', auth, checkFeature('calendarBooking'), async (req,
     slot.date = targetDate;
     slot.time = targetTime;
     slot.service = serviceId;
-    slot.manualPrice = price || null;
+    slot.manualPrice = normalizedPrice;
+    slot.payment = {
+      ...(slot.payment || {}),
+      isPaid: true,
+      amount: normalizedPrice
+    };
     slot.updatedAt = new Date();
     await slot.save();
 
@@ -1123,6 +1701,12 @@ router.patch('/:slotId/edit', auth, checkFeature('calendarBooking'), async (req,
       name: service.name,
       price: service.price,
       duration: service.duration
+    };
+    slotData.manualPrice = normalizedPrice;
+    slotData.payment = {
+      ...(slotData.payment || {}),
+      isPaid: true,
+      amount: normalizedPrice
     };
 
     res.json({

@@ -6,7 +6,9 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 import 'react-toastify/dist/ReactToastify.css';
 
 function BarberLogin() {
+  const [loginType, setLoginType] = useState('owner');
   const [phone, setPhone] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState({});
@@ -22,8 +24,11 @@ function BarberLogin() {
 
   const validateForm = () => {
     const newErrors = {};
-    if (!phone.trim()) {
+    if (loginType === 'owner' && !phone.trim()) {
       newErrors.phone = 'Telefon numarası gerekli';
+    }
+    if (loginType === 'master' && !username.trim()) {
+      newErrors.username = 'Kullanıcı adı gerekli';
     }
     if (!password.trim()) {
       newErrors.password = 'Şifre gerekli';
@@ -42,9 +47,26 @@ function BarberLogin() {
 
     setLoading(true);
     try {
-      const res = await api.post('/barbers/login', { phone, password });
+      const res = loginType === 'owner'
+        ? await api.post('/barbers/login', { phone, password })
+        : await api.post('/barbers/master/login', { username, password });
+
       localStorage.setItem('barberToken', res.data.token);
       localStorage.setItem('barberId', res.data.data.id);
+      localStorage.setItem('barberRole', res.data.data.role || (loginType === 'master' ? 'master' : 'barber'));
+
+      if (res.data.data?.master?.id) {
+        localStorage.setItem('masterId', res.data.data.master.id);
+      } else {
+        localStorage.removeItem('masterId');
+      }
+
+      if (res.data.data?.master?.permissions) {
+        localStorage.setItem('masterPermissions', JSON.stringify(res.data.data.master.permissions));
+      } else {
+        localStorage.removeItem('masterPermissions');
+      }
+
       toast.success('✅ Giriş başarılı! Yönlendiriliyorsunuz...', { position: "top-center" });
       setTimeout(() => {
         navigate('/barber/dashboard');
@@ -67,26 +89,69 @@ function BarberLogin() {
         </div>
         
         <div className="card-body p-4">
+          <div className="d-flex gap-2 mb-3">
+            <button
+              type="button"
+              className={`btn btn-sm ${loginType === 'owner' ? 'btn-primary' : 'btn-outline-primary'} flex-fill`}
+              onClick={() => {
+                setLoginType('owner');
+                setErrors({});
+              }}
+            >
+              İşletme Sahibi
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${loginType === 'master' ? 'btn-primary' : 'btn-outline-primary'} flex-fill`}
+              onClick={() => {
+                setLoginType('master');
+                setErrors({});
+              }}
+            >
+              Usta Girişi
+            </button>
+          </div>
+
           <form onSubmit={handleLogin}>
-            {/* Telefon Alanı */}
-            <div className="mb-3">
-              <label className="form-label fw-semibold">Telefon Numarası</label>
-              <input
-                type="text"
-                className={`form-control form-control-lg ${errors.phone ? 'is-invalid' : ''}`}
-                placeholder="05XX XXX XXXX"
-                value={phone}
-                onChange={(e) => {
-                  setPhone(e.target.value);
-                  if (errors.phone) setErrors({ ...errors, phone: '' });
-                }}
-              />
-              {errors.phone && (
-                <div className="invalid-feedback d-block mt-2">
-                  <small>⚠️ {errors.phone}</small>
-                </div>
-              )}
-            </div>
+            {loginType === 'owner' ? (
+              <div className="mb-3">
+                <label className="form-label fw-semibold">Telefon Numarası</label>
+                <input
+                  type="text"
+                  className={`form-control form-control-lg ${errors.phone ? 'is-invalid' : ''}`}
+                  placeholder="05XX XXX XXXX"
+                  value={phone}
+                  onChange={(e) => {
+                    setPhone(e.target.value);
+                    if (errors.phone) setErrors({ ...errors, phone: '' });
+                  }}
+                />
+                {errors.phone && (
+                  <div className="invalid-feedback d-block mt-2">
+                    <small>⚠️ {errors.phone}</small>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="mb-3">
+                <label className="form-label fw-semibold">Kullanıcı Adı</label>
+                <input
+                  type="text"
+                  className={`form-control form-control-lg ${errors.username ? 'is-invalid' : ''}`}
+                  placeholder="usta.kullanici"
+                  value={username}
+                  onChange={(e) => {
+                    setUsername(e.target.value);
+                    if (errors.username) setErrors({ ...errors, username: '' });
+                  }}
+                />
+                {errors.username && (
+                  <div className="invalid-feedback d-block mt-2">
+                    <small>⚠️ {errors.username}</small>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Şifre Alanı */}
             <div className="mb-4">

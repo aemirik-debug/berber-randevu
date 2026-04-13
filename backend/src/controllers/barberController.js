@@ -16,6 +16,114 @@ function barberDefaultsWorkingHours() {
   return obj;
 }
 
+function defaultMasterPermissions() {
+  return {
+    home: true,
+    calendar: true,
+    services: false,
+    stats: false,
+    settings: false,
+    masters: false,
+  };
+}
+
+function sanitizeMasterPermissions(input) {
+  const defaults = defaultMasterPermissions();
+  const raw = (input && typeof input === 'object') ? input : {};
+  return {
+    home: raw.home === undefined ? defaults.home : Boolean(raw.home),
+    calendar: raw.calendar === undefined ? defaults.calendar : Boolean(raw.calendar),
+    services: raw.services === undefined ? defaults.services : Boolean(raw.services),
+    stats: raw.stats === undefined ? defaults.stats : Boolean(raw.stats),
+    settings: raw.settings === undefined ? defaults.settings : Boolean(raw.settings),
+    masters: raw.masters === undefined ? defaults.masters : Boolean(raw.masters),
+  };
+}
+
+async function normalizeMastersForStorage(incomingMasters, existingMasters = []) {
+  const source = Array.isArray(incomingMasters) ? incomingMasters : [];
+  const existingById = new Map(
+    (Array.isArray(existingMasters) ? existingMasters : [])
+      .filter((item) => item && item._id)
+      .map((item) => [String(item._id), item])
+  );
+
+  const usernames = new Set();
+  const normalized = [];
+
+  for (const item of source) {
+    const name = String(item?.name || '').trim();
+    const specialty = String(item?.specialty || '').trim();
+    const username = String(item?.username || '').trim().toLowerCase();
+    const itemId = item?._id ? String(item._id) : '';
+    const existing = itemId ? existingById.get(itemId) : null;
+
+    if (!name) {
+      throw new Error('Usta adı zorunludur');
+    }
+
+    if (!username || username.length < 3) {
+      throw new Error('Usta kullanıcı adı en az 3 karakter olmalıdır');
+    }
+
+    if (usernames.has(username)) {
+      throw new Error('Usta kullanıcı adları benzersiz olmalıdır');
+    }
+    usernames.add(username);
+
+    const rawPassword = String(item?.password || '').trim();
+    let passwordHash = existing?.passwordHash || '';
+
+    if (rawPassword) {
+      if (rawPassword.length < 6) {
+        throw new Error('Usta şifresi en az 6 karakter olmalıdır');
+      }
+      passwordHash = await bcrypt.hash(rawPassword, 10);
+    }
+
+    if (!passwordHash) {
+      throw new Error(`${name} için şifre zorunludur`);
+    }
+
+    const normalizedMaster = {
+      name,
+      specialty,
+      username,
+      passwordHash,
+      permissions: sanitizeMasterPermissions(item?.permissions),
+      isActive: item?.isActive === undefined ? true : Boolean(item.isActive),
+      createdAt: existing?.createdAt || item?.createdAt || new Date(),
+    };
+
+    if (existing?._id) {
+      normalizedMaster._id = existing._id;
+    }
+
+    normalized.push(normalizedMaster);
+  }
+
+  return normalized;
+}
+
+function sanitizeBarberForClient(barberDoc) {
+  const raw = barberDoc?.toObject ? barberDoc.toObject() : { ...(barberDoc || {}) };
+  if (!raw) {
+    return raw;
+  }
+
+  delete raw.password;
+
+  if (Array.isArray(raw.masters)) {
+    raw.masters = raw.masters.map((master) => {
+      const safeMaster = { ...(master || {}) };
+      delete safeMaster.passwordHash;
+      return safeMaster;
+    });
+  }
+
+  return raw;
+}
+
 exports.register = async (req, res) => {
   try {
     const { barberType, salonName, fullName, phone, email, address, city, district, subscriptionPlan, password, services, features, workingHours } = req.body;
@@ -118,6 +226,76 @@ exports.login = async (req, res) => {
   }
 };
 
+// Usta Login (berbere bagli alt hesap)
+exports.masterLogin = async (req, res) => {
+  try {
+    const username = String(req.body?.username || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Kullanıcı adı ve şifre zorunludur' });
+    }
+
+    const barber = await Barber.findOne({ 'masters.username': username });
+    if (!barber) {
+      return res.status(400).json({ error: 'Usta hesabı bulunamadı' });
+    }
+
+    const master = (barber.masters || []).find((item) => String(item.username || '').toLowerCase() === username);
+    if (!master) {
+      return res.status(400).json({ error: 'Usta hesabı bulunamadı' });
+    }
+
+    if (master.isActive === false) {
+      return res.status(403).json({ error: 'Usta hesabı pasif durumda' });
+    }
+
+    const isMatch = await bcrypt.compare(password, String(master.passwordHash || ''));
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Şifre hatalı' });
+    }
+
+    const permissions = {
+      home: master.permissions?.home !== false,
+      calendar: master.permissions?.calendar !== false,
+      services: Boolean(master.permissions?.services),
+      stats: Boolean(master.permissions?.stats),
+      settings: Boolean(master.permissions?.settings),
+      masters: Boolean(master.permissions?.masters),
+    };
+
+    const token = jwt.sign(
+      {
+        barberId: barber._id,
+        role: 'master',
+        masterId: master._id,
+        permissions,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return res.json({
+      success: true,
+      token,
+      data: {
+        id: barber._id,
+        salonName: barber.salonName,
+        barberType: barber.barberType,
+        role: 'master',
+        master: {
+          id: master._id,
+          name: master.name,
+          username: master.username,
+          permissions,
+        },
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 
 // @desc    Durum güncelleme (online/busy/offline)
 // @route   PATCH /api/barbers/status
@@ -191,10 +369,12 @@ exports.getNearby = async (req, res) => {
       status: { $in: ['online', 'busy'] } // Sadece aktif berberler
     }).select('-password');
 
+    const safeBarbers = barbers.map((item) => sanitizeBarberForClient(item));
+
     res.json({
       success: true,
-      count: barbers.length,
-      data: barbers
+      count: safeBarbers.length,
+      data: safeBarbers
     });
 
   } catch (error) {
@@ -216,7 +396,7 @@ exports.getProfile = async (req, res) => {
       return res.status(404).json({ error: 'Berber bulunamadı' });
     }
 
-    res.json(barber);
+    res.json(sanitizeBarberForClient(barber));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -239,6 +419,10 @@ exports.updateProfile = async (req, res) => {
     const barber = await Barber.findById(barberId);
     if (!barber) {
       return res.status(404).json({ error: 'Berber bulunamadı' });
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'masters')) {
+      updates.masters = await normalizeMastersForStorage(updates.masters, barber.masters || []);
     }
 
     // E-posta sadece boşken bir kez kaydedilebilir; kaydedildikten sonra değiştirilemez.
@@ -297,7 +481,7 @@ exports.updateProfile = async (req, res) => {
       });
     }
 
-    res.json({ success: true, data: updatedBarber });
+    res.json({ success: true, data: sanitizeBarberForClient(updatedBarber) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

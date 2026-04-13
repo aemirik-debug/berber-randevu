@@ -69,6 +69,24 @@ const BarberSchema = new mongoose.Schema({
       duration: { type: Number, default: 0 } // dakikayla
     }
   ],
+  masters: [
+    {
+      name: { type: String, required: true, trim: true },
+      specialty: { type: String, default: '', trim: true },
+      username: { type: String, required: true, trim: true, lowercase: true },
+      passwordHash: { type: String, required: true },
+      permissions: {
+        home: { type: Boolean, default: true },
+        calendar: { type: Boolean, default: true },
+        services: { type: Boolean, default: false },
+        stats: { type: Boolean, default: false },
+        settings: { type: Boolean, default: false },
+        masters: { type: Boolean, default: false }
+      },
+      isActive: { type: Boolean, default: true },
+      createdAt: { type: Date, default: Date.now }
+    }
+  ],
   reviews: [
     {
       customerId: { type: String, required: true },

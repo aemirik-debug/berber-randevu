@@ -10,6 +10,8 @@ module.exports = (req, res, next) => {
     req.user = decoded; // { barberId, role }
     req.barberId = decoded.barberId; // Uyumluluk için
     req.customerId = decoded.customerId; // Müşteri route'ları için
+    req.masterId = decoded.masterId; // Usta route'ları için
+    req.masterPermissions = decoded.permissions || null;
     next();
   } catch (err) {
     res.status(401).json({ error: 'Geçersiz token' });

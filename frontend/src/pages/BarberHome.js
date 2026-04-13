@@ -25,6 +25,30 @@ const MONTH_NAMES_TR = [
   'Kasım',
   'Aralık',
 ];
+const MASTER_PERMISSION_META = [
+  { key: 'home', label: 'Ana Sayfa' },
+  { key: 'calendar', label: 'Takvim' },
+  { key: 'services', label: 'Hizmetler' },
+  { key: 'stats', label: 'İstatistikler' },
+  { key: 'settings', label: 'Mağaza Ayarları' },
+  { key: 'masters', label: 'Usta Yönetimi' },
+];
+const defaultMasterPermissions = () => ({
+  home: true,
+  calendar: true,
+  services: false,
+  stats: false,
+  settings: false,
+  masters: false,
+});
+const buildEmptyMasterDraft = () => ({
+  name: '',
+  specialty: '',
+  username: '',
+  password: '',
+  isActive: true,
+  permissions: defaultMasterPermissions(),
+});
 const toLocalDateInput = (date) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -61,6 +85,30 @@ const getCurrentYearBounds = (year) => ({
   startDate: `${year}-01-01`,
   endDate: `${year}-12-31`,
 });
+
+const toDateTimeFromSlot = (slot) => {
+  const date = String(slot?.date || '').trim();
+  const time = String(slot?.time || '').trim().slice(0, 5);
+  if (!date || !/^([01]\d|2[0-3]):([0-5]\d)$/.test(time)) {
+    return null;
+  }
+
+  const parsed = new Date(`${date}T${time}:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed;
+};
+
+const isCompletionActionReady = (slot, nowDate) => {
+  const slotDateTime = toDateTimeFromSlot(slot);
+  if (!slotDateTime) {
+    return false;
+  }
+
+  return nowDate.getTime() >= (slotDateTime.getTime() + (60 * 60 * 1000));
+};
 
 const splitCustomerFullName = (slot) => {
   const rawName = String(slot?.customer?.name || slot?.customerName || '').trim();
@@ -132,7 +180,15 @@ function BarberHome() {
   const [confirmAction, setConfirmAction] = useState(null);
   const [summaryModal, setSummaryModal] = useState(null);
   const [recentlyDeletedSlot, setRecentlyDeletedSlot] = useState(null);
-  const [mobileHomeTab, setMobileHomeTab] = useState('today');
+  const [recentlyDeletedSlotId, setRecentlyDeletedSlotId] = useState('');
+  const [mobileHomeTab, setMobileHomeTab] = useState('actions');
+  const [masterDraft, setMasterDraft] = useState(buildEmptyMasterDraft());
+  const [isSavingMaster, setIsSavingMaster] = useState(false);
+  const [editingHomeMasterIndex, setEditingHomeMasterIndex] = useState(-1);
+  const [editingHomeMasterDraft, setEditingHomeMasterDraft] = useState(buildEmptyMasterDraft());
+  const [currentUserRole, setCurrentUserRole] = useState('barber');
+  const [currentMasterPermissions, setCurrentMasterPermissions] = useState(defaultMasterPermissions());
+  const [slotMasterDrafts, setSlotMasterDrafts] = useState({});
   const todayIso = useMemo(() => toLocalDateInput(new Date()), []);
   const currentCalendarDate = useMemo(() => new Date(nowTick), [nowTick]);
   const currentYear = currentCalendarDate.getFullYear();
@@ -143,6 +199,17 @@ function BarberHome() {
       return dateStr || '-';
     }
     return `${day}.${month}.${year}`;
+  };
+  const formatDateTimeShortTr = (dateStr) => {
+    const parsed = new Date(dateStr);
+    if (Number.isNaN(parsed.getTime())) {
+      return '-';
+    }
+    return parsed.toLocaleDateString('tr-TR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
   };
 
   const barberInitials = `${(barber?.name?.[0] || 'B')}${(barber?.surname?.[0] || 'R')}`.toUpperCase();
@@ -166,13 +233,58 @@ function BarberHome() {
     }));
   }, [mySlots, slotDate, todayIso, nowTimeHHmm]);
 
+  const calendarSlotsForView = useMemo(() => {
+    if (currentUserRole === 'master') {
+      return visibleMySlots;
+    }
+
+    return visibleMySlots.filter((slot) => {
+      const statusLc = String(slot.status || '').toLowerCase();
+      const hasAppointment = Boolean(slot.customerName || slot.customer?.name);
+      const isMasterOwned = Boolean(slot.assignedMaster?.masterId);
+      const isFilledAppointment = [
+        'booked',
+        'confirmed',
+        'completed',
+        'reschedule_pending_customer',
+        'reschedule_pending_barber',
+      ].includes(statusLc);
+
+      // Isletme takviminde, usta tarafinda olusturulan dolu randevular gorunmez.
+      if (isMasterOwned && hasAppointment && isFilledAppointment) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [visibleMySlots, currentUserRole]);
+
   const navigationItems = [
     { key: 'home', label: 'Ana Sayfa', icon: '🏠' },
     { key: 'services', label: 'Hizmetler', icon: '✂️', count: services.length },
+    { key: 'masters', label: 'Ustalar', icon: '🧑‍🔧', count: Array.isArray(barber?.masters) ? barber.masters.length : 0 },
     { key: 'calendar', label: 'Takvim', icon: '📅' },
     { key: 'stats', label: 'İstatistikler', icon: '📊' },
     { key: 'settings', label: 'Mağaza Ayarları', icon: '⚙️' },
   ];
+  const isMasterUser = currentUserRole === 'master';
+  const canAccessSection = (sectionKey) => {
+    if (!isMasterUser) {
+      return true;
+    }
+
+    if (sectionKey === 'home') return currentMasterPermissions.home !== false;
+    if (sectionKey === 'calendar') return Boolean(currentMasterPermissions.calendar);
+    if (sectionKey === 'services') return Boolean(currentMasterPermissions.services);
+    if (sectionKey === 'stats') return Boolean(currentMasterPermissions.stats);
+    if (sectionKey === 'settings') return Boolean(currentMasterPermissions.settings);
+    if (sectionKey === 'masters') return Boolean(currentMasterPermissions.masters);
+    return false;
+  };
+  const visibleNavigationItems = useMemo(
+    () => navigationItems.filter((item) => canAccessSection(item.key)),
+    [navigationItems, currentUserRole, currentMasterPermissions]
+  );
 
   const loadDashboardSlotsForToday = async () => {
     try {
@@ -277,6 +389,19 @@ function BarberHome() {
   useEffect(() => {
     const token = localStorage.getItem('barberToken');
     const barberId = localStorage.getItem('barberId');
+    const role = localStorage.getItem('barberRole') || 'barber';
+    const permissionRaw = localStorage.getItem('masterPermissions');
+    let parsedPermissions = defaultMasterPermissions();
+    if (permissionRaw) {
+      try {
+        parsedPermissions = { ...defaultMasterPermissions(), ...JSON.parse(permissionRaw) };
+      } catch (_) {
+        parsedPermissions = defaultMasterPermissions();
+      }
+    }
+    setCurrentUserRole(role);
+    setCurrentMasterPermissions(parsedPermissions);
+
     if (!token || !barberId) {
       navigate('/barber/login', { replace: true });
       return;
@@ -319,6 +444,9 @@ function BarberHome() {
         if (err.response?.status === 401) {
           localStorage.removeItem('barberToken');
           localStorage.removeItem('barberId');
+          localStorage.removeItem('barberRole');
+          localStorage.removeItem('masterId');
+          localStorage.removeItem('masterPermissions');
           navigate('/barber/login', { replace: true });
         }
       }
@@ -331,6 +459,13 @@ function BarberHome() {
       disconnectSocket();
     };
   }, [navigate, todayIso]);
+
+  useEffect(() => {
+    if (canAccessSection(activeSection)) {
+      return;
+    }
+    setActiveSection('home');
+  }, [activeSection, currentUserRole, currentMasterPermissions]);
 
   // Load slots when calendar section is active
   useEffect(() => {
@@ -430,12 +565,14 @@ function BarberHome() {
   const dashboardAppointmentStats = useMemo(() => {
     const newRequests = dashboardSlots.filter((slot) => String(slot.status || '').toLowerCase() === 'booked').length;
     const confirmed = dashboardSlots.filter((slot) => String(slot.status || '').toLowerCase() === 'confirmed').length;
+    const completed = dashboardSlots.filter((slot) => String(slot.status || '').toLowerCase() === 'completed').length;
     const available = dashboardSlots.filter((slot) => String(slot.status || '').toLowerCase() === 'available').length;
     const cancelled = dashboardSlots.filter((slot) => ['cancelled', 'rejected', 'reddedildi'].includes(String(slot.status || '').toLowerCase())).length;
     return {
       total: dashboardSlots.length,
       newRequests,
       confirmed,
+      completed,
       available,
       cancelled,
     };
@@ -490,6 +627,112 @@ function BarberHome() {
       isCurrentMonth: bucket.monthIndex === currentMonthIndex,
     }));
   }, [dashboardRevenueSlots, currentMonthIndex, currentYear]);
+  const monthlyRevenueTrend = useMemo(() => {
+    const currentMonth = monthlyRevenueList.find((month) => month.isCurrentMonth) || null;
+    const previousMonthIndex = (currentMonthIndex + 11) % 12;
+    const previousMonth = monthlyRevenueList.find((month) => month.monthIndex === previousMonthIndex) || null;
+    const currentAmount = currentMonth?.amount || 0;
+    const previousAmount = previousMonth?.amount || 0;
+    const diff = currentAmount - previousAmount;
+    const percentChange = previousAmount > 0 ? Math.round((diff / previousAmount) * 100) : null;
+
+    return {
+      currentMonth,
+      previousMonth,
+      diff,
+      percentChange,
+      isIncrease: diff >= 0,
+    };
+  }, [currentMonthIndex, monthlyRevenueList]);
+  const revenueChartMonths = useMemo(() => {
+    return monthlyRevenueList.slice(-6);
+  }, [monthlyRevenueList]);
+  const revenueChartMax = useMemo(() => {
+    return Math.max(...revenueChartMonths.map((month) => Number(month.amount || 0)), 1);
+  }, [revenueChartMonths]);
+  const topServices = useMemo(() => {
+    const revenueStatuses = new Set(['confirmed', 'completed']);
+    const serviceMap = new Map();
+
+    dashboardRevenueSlots.forEach((slot) => {
+      const statusLc = String(slot.status || '').toLowerCase();
+      if (!revenueStatuses.has(statusLc)) {
+        return;
+      }
+
+      const serviceName = String(getSlotServiceName(slot) || '').trim() || 'Hizmet seçilmedi';
+      const existing = serviceMap.get(serviceName) || { name: serviceName, count: 0, revenue: 0 };
+      existing.count += 1;
+      existing.revenue += toSlotRevenueAmount(slot);
+      serviceMap.set(serviceName, existing);
+    });
+
+    return Array.from(serviceMap.values())
+      .sort((a, b) => {
+        if (b.count !== a.count) {
+          return b.count - a.count;
+        }
+        return b.revenue - a.revenue;
+      })
+      .slice(0, 6);
+  }, [dashboardRevenueSlots]);
+  const masterPerformanceStats = useMemo(() => {
+    if (isMasterUser) {
+      return [];
+    }
+
+    const revenueStatuses = new Set(['confirmed', 'completed']);
+    const masterMap = new Map();
+
+    dashboardRevenueSlots.forEach((slot) => {
+      const statusLc = String(slot.status || '').toLowerCase();
+      if (!revenueStatuses.has(statusLc)) {
+        return;
+      }
+
+      const masterId = String(slot?.assignedMaster?.masterId || '').trim();
+      if (!masterId) {
+        return;
+      }
+
+      const masterName = String(slot?.assignedMaster?.name || 'İsimsiz Usta').trim() || 'İsimsiz Usta';
+      const existing = masterMap.get(masterId) || { id: masterId, name: masterName, count: 0, revenue: 0 };
+      existing.count += 1;
+      existing.revenue += toSlotRevenueAmount(slot);
+      masterMap.set(masterId, existing);
+    });
+
+    return Array.from(masterMap.values())
+      .sort((a, b) => {
+        if (b.revenue !== a.revenue) {
+          return b.revenue - a.revenue;
+        }
+        return b.count - a.count;
+      })
+      .slice(0, 6);
+  }, [dashboardRevenueSlots, isMasterUser]);
+  const actionableDecisionRate = useMemo(() => {
+    const decidedTotal = dashboardAppointmentStats.confirmed + dashboardAppointmentStats.completed + dashboardAppointmentStats.cancelled;
+    if (decidedTotal === 0) {
+      return 0;
+    }
+    return Math.round(((dashboardAppointmentStats.confirmed + dashboardAppointmentStats.completed) / decidedTotal) * 100);
+  }, [dashboardAppointmentStats]);
+  const statsStatusItems = useMemo(() => {
+    const rows = [
+      { key: 'new', label: 'Yeni Talepler', value: dashboardAppointmentStats.newRequests },
+      { key: 'confirmed', label: 'Onaylanan', value: dashboardAppointmentStats.confirmed },
+      { key: 'completed', label: 'Tamamlanan', value: dashboardAppointmentStats.completed },
+      { key: 'cancelled', label: 'Reddedilen/İptal', value: dashboardAppointmentStats.cancelled },
+      { key: 'available', label: 'Müsait Slotlar', value: dashboardAppointmentStats.available },
+    ];
+    const maxValue = Math.max(...rows.map((row) => row.value), 1);
+
+    return rows.map((row) => ({
+      ...row,
+      percent: Math.round((row.value / maxValue) * 100),
+    }));
+  }, [dashboardAppointmentStats]);
   const confirmedSummarySlots = useMemo(() => {
     return dashboardRevenueSlots
       .filter((slot) => ['confirmed', 'completed'].includes(String(slot.status || '').toLowerCase()))
@@ -501,6 +744,16 @@ function BarberHome() {
         return String(a.time || '').localeCompare(String(b.time || ''));
       });
   }, [dashboardRevenueSlots]);
+  const todayApprovedSummarySlots = useMemo(() => {
+    return dashboardSlots
+      .filter((slot) => {
+        if (String(slot.date || '') !== todayIso) {
+          return false;
+        }
+        return ['confirmed', 'completed'].includes(String(slot.status || '').toLowerCase());
+      })
+      .sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+  }, [dashboardSlots, todayIso]);
   const rejectedSummarySlots = useMemo(() => {
     return dashboardRevenueSlots
       .filter((slot) => ['cancelled', 'rejected', 'reddedildi', 'rejected_by_barber'].includes(String(slot.status || '').toLowerCase()))
@@ -535,11 +788,11 @@ function BarberHome() {
       return null;
     }
 
-    if (summaryModal.type === 'confirmed') {
+    if (summaryModal.type === 'today-approved') {
       return {
-        title: 'Onaylanan Randevular',
-        subtitle: 'Onaylanan randevuların detayları',
-        items: confirmedSummarySlots,
+        title: 'Bugünkü Onaylı Randevular',
+        subtitle: 'Bugün onaylanan ve tamamlanan tüm randevular',
+        items: todayApprovedSummarySlots,
       };
     }
 
@@ -556,7 +809,7 @@ function BarberHome() {
       subtitle: `${MONTH_NAMES_TR[currentMonthIndex]} ayı onaylanan randevuların detayları`,
       items: currentMonthSummarySlots,
     };
-  }, [confirmedSummarySlots, currentMonthIndex, currentMonthSummarySlots, rejectedSummarySlots, summaryModal]);
+  }, [currentMonthIndex, currentMonthSummarySlots, rejectedSummarySlots, summaryModal, todayApprovedSummarySlots]);
   const dashboardBookedSlots = useMemo(() => {
     return dashboardPendingSlots;
   }, [dashboardPendingSlots]);
@@ -572,6 +825,16 @@ function BarberHome() {
       return statusLc === 'booked' || statusLc === 'reschedule_pending_barber';
     }).length;
   }, [dashboardBookedSlots]);
+  const latestReviews = useMemo(() => {
+    const reviews = Array.isArray(barber?.reviews) ? barber.reviews : [];
+    return [...reviews]
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      .slice(0, 6);
+  }, [barber]);
+  const salonMasters = useMemo(() => {
+    return Array.isArray(barber?.masters) ? barber.masters : [];
+  }, [barber]);
+  const homeVisibleMasters = useMemo(() => salonMasters.slice(0, 5), [salonMasters]);
   const openSummaryModal = (type) => setSummaryModal({ type });
   const closeSummaryModal = () => setSummaryModal(null);
   const mobileSectionClass = (tabKey) => `barber-mobile-section ${mobileHomeTab === tabKey ? '' : 'is-mobile-hidden'}`;
@@ -653,6 +916,9 @@ function BarberHome() {
   const handleLogout = () => {
     localStorage.removeItem('barberToken');
     localStorage.removeItem('barberId');
+    localStorage.removeItem('barberRole');
+    localStorage.removeItem('masterId');
+    localStorage.removeItem('masterPermissions');
     navigate('/barber/login');
   };
 
@@ -742,6 +1008,31 @@ function BarberHome() {
     }
   };
 
+  const handleCompleteConfirmedSlot = async (slot) => {
+    try {
+      setPendingSlotActionId(slot._id);
+      await api.patch(`/slots/${slot._id}/action`, {
+        action: 'complete',
+      });
+
+      await Promise.all([
+        loadDashboardSlotsForToday(),
+        loadDashboardPendingSlots(),
+        loadDashboardRevenueSlots(),
+      ]);
+
+      if (activeSection === 'calendar' && slotDate === todayIso) {
+        await loadSlotsForDate(slotDate);
+      }
+
+      setActionMessage({ text: 'Randevu tamamlandı olarak işaretlendi.', type: 'success' });
+    } catch (err) {
+      setActionMessage({ text: err.response?.data?.error || 'Randevu tamamlanamadı', type: 'error' });
+    } finally {
+      setPendingSlotActionId('');
+    }
+  };
+
   const handleToggleAvailability = async (slot, newStatus) => {
     try {
       setPendingSlotActionId(slot._id);
@@ -761,6 +1052,7 @@ function BarberHome() {
   const handleDeleteSlot = async (slot) => {
     try {
       setPendingSlotActionId(slot._id);
+      setSlotsError('');
       if (!slot?.isManualAppointment) {
         throw new Error('Sadece manuel oluşturduğunuz randevuları gizleyebilirsiniz');
       }
@@ -774,10 +1066,10 @@ function BarberHome() {
         date: slot.date,
         time: slot.time,
       });
+      setRecentlyDeletedSlotId(String(slot._id));
       await loadSlotsForDate(slotDate);
-      setActionMessage({ text: 'Randevu gizlendi. Geri alabilirsiniz.', type: 'success' });
     } catch (err) {
-      setActionMessage({ text: err.response?.data?.error || 'Saat silinemedi', type: 'error' });
+      setSlotsError(err.response?.data?.error || err.message || 'Saat silinemedi');
     } finally {
       setPendingSlotActionId('');
     }
@@ -790,12 +1082,13 @@ function BarberHome() {
 
     try {
       setPendingSlotActionId(recentlyDeletedSlot._id);
+      setSlotsError('');
       await api.patch(`/slots/${recentlyDeletedSlot._id}/restore`);
       await loadSlotsForDate(slotDate);
-      setActionMessage({ text: 'Randevu geri alındı.', type: 'success' });
       setRecentlyDeletedSlot(null);
+      setRecentlyDeletedSlotId('');
     } catch (err) {
-      setActionMessage({ text: err.response?.data?.error || 'Randevu geri alınamadı', type: 'error' });
+      setSlotsError(err.response?.data?.error || 'Randevu geri alınamadı');
     } finally {
       setPendingSlotActionId('');
     }
@@ -911,6 +1204,177 @@ function BarberHome() {
     }
   };
 
+  const handleAddMaster = async (e) => {
+    e.preventDefault();
+
+    const name = String(masterDraft.name || '').trim();
+    const specialty = String(masterDraft.specialty || '').trim();
+    const username = String(masterDraft.username || '').trim().toLowerCase();
+    const password = String(masterDraft.password || '').trim();
+
+    if (!name) {
+      setActionMessage({ text: 'Usta adı zorunludur', type: 'error' });
+      return;
+    }
+
+    if (!username || username.length < 3) {
+      setActionMessage({ text: 'Usta kullanıcı adı en az 3 karakter olmalıdır', type: 'error' });
+      return;
+    }
+
+    if (!password || password.length < 6) {
+      setActionMessage({ text: 'Usta şifresi en az 6 karakter olmalıdır', type: 'error' });
+      return;
+    }
+
+    const nextMasters = [
+      ...salonMasters,
+      {
+        name,
+        specialty,
+        username,
+        password,
+        permissions: { ...defaultMasterPermissions(), ...(masterDraft.permissions || {}) },
+        isActive: true,
+      },
+    ];
+
+    try {
+      setIsSavingMaster(true);
+      const res = await api.patch('/barbers/profile', { masters: nextMasters });
+      const updatedBarber = res.data?.data || null;
+
+      if (updatedBarber) {
+        setBarber(updatedBarber);
+      } else {
+        const profileRes = await api.get('/barbers/profile');
+        setBarber(profileRes.data || {});
+      }
+
+      setMasterDraft(buildEmptyMasterDraft());
+      setActionMessage({ text: 'Usta eklendi.', type: 'success' });
+    } catch (err) {
+      setActionMessage({ text: err.response?.data?.error || 'Usta eklenemedi', type: 'error' });
+    } finally {
+      setIsSavingMaster(false);
+    }
+  };
+
+  const startEditHomeMaster = (master, index) => {
+    setEditingHomeMasterIndex(index);
+    setEditingHomeMasterDraft({
+      name: String(master?.name || ''),
+      specialty: String(master?.specialty || ''),
+      username: String(master?.username || ''),
+      password: '',
+      isActive: master?.isActive !== false,
+      permissions: { ...defaultMasterPermissions(), ...(master?.permissions || {}) },
+    });
+  };
+
+  const cancelEditHomeMaster = () => {
+    setEditingHomeMasterIndex(-1);
+    setEditingHomeMasterDraft(buildEmptyMasterDraft());
+  };
+
+  const handleUpdateHomeMaster = async (index) => {
+    const name = String(editingHomeMasterDraft.name || '').trim();
+    const specialty = String(editingHomeMasterDraft.specialty || '').trim();
+    const username = String(editingHomeMasterDraft.username || '').trim().toLowerCase();
+    const password = String(editingHomeMasterDraft.password || '').trim();
+
+    if (!name) {
+      setActionMessage({ text: 'Usta adı zorunludur', type: 'error' });
+      return;
+    }
+
+    if (!username || username.length < 3) {
+      setActionMessage({ text: 'Usta kullanıcı adı en az 3 karakter olmalıdır', type: 'error' });
+      return;
+    }
+
+    if (password && password.length < 6) {
+      setActionMessage({ text: 'Yeni şifre en az 6 karakter olmalıdır', type: 'error' });
+      return;
+    }
+
+    const nextMasters = salonMasters.map((master, currentIndex) => (
+      currentIndex === index
+        ? {
+            _id: master?._id,
+            ...master,
+            name,
+            specialty,
+            username,
+            permissions: { ...defaultMasterPermissions(), ...(editingHomeMasterDraft.permissions || {}) },
+            isActive: editingHomeMasterDraft.isActive !== false,
+            ...(password ? { password } : {}),
+          }
+        : master
+    ));
+
+    try {
+      setIsSavingMaster(true);
+      const res = await api.patch('/barbers/profile', { masters: nextMasters });
+      setBarber(res.data?.data || barber);
+      cancelEditHomeMaster();
+      setActionMessage({ text: 'Usta bilgisi güncellendi.', type: 'success' });
+    } catch (err) {
+      setActionMessage({ text: err.response?.data?.error || 'Usta güncellenemedi', type: 'error' });
+    } finally {
+      setIsSavingMaster(false);
+    }
+  };
+
+  const handleDeleteHomeMaster = async (index) => {
+    const target = salonMasters[index];
+    const targetName = String(target?.name || 'Bu usta');
+    const isConfirmed = window.confirm(`${targetName} kaydını silmek istiyor musunuz?`);
+    if (!isConfirmed) {
+      return;
+    }
+
+    const nextMasters = salonMasters.filter((_, currentIndex) => currentIndex !== index);
+
+    try {
+      setIsSavingMaster(true);
+      const res = await api.patch('/barbers/profile', { masters: nextMasters });
+      setBarber(res.data?.data || barber);
+      if (editingHomeMasterIndex === index) {
+        cancelEditHomeMaster();
+      }
+      setActionMessage({ text: 'Usta silindi.', type: 'success' });
+    } catch (err) {
+      setActionMessage({ text: err.response?.data?.error || 'Usta silinemedi', type: 'error' });
+    } finally {
+      setIsSavingMaster(false);
+    }
+  };
+
+  const handleAssignMasterToSlot = async (slot, masterId) => {
+    try {
+      setPendingSlotActionId(slot._id);
+      await api.patch(`/slots/${slot._id}/assign-master`, {
+        masterId: masterId || null,
+      });
+
+      if (activeSection === 'calendar') {
+        await loadSlotsForDate(slotDate);
+      }
+
+      await Promise.all([
+        loadDashboardSlotsForToday(),
+        loadDashboardPendingSlots(),
+      ]);
+
+      setActionMessage({ text: 'Usta ataması güncellendi.', type: 'success' });
+    } catch (err) {
+      setActionMessage({ text: err.response?.data?.error || 'Usta ataması güncellenemedi', type: 'error' });
+    } finally {
+      setPendingSlotActionId('');
+    }
+  };
+
   const renderNavItem = (item) => (
     <button
       key={item.key}
@@ -946,7 +1410,7 @@ function BarberHome() {
       <aside className={`sidebar ${showMobileMenu ? 'show' : ''}`}>
         <div className="sidebar-logo">✂️ Berber Paneli</div>
         <nav className="sidebar-nav">
-          {navigationItems.map(renderNavItem)}
+          {visibleNavigationItems.map(renderNavItem)}
         </nav>
         <footer className="sidebar-footer">
           <small>© 2026 Berber Randevu</small>
@@ -1024,10 +1488,9 @@ function BarberHome() {
                   <div className="barber-home-kicker">İşletme Kontrol Merkezi</div>
                   <h1 className="page-title barber-home-title">Hoş geldiniz, {barber?.salonName || 'Berber'}</h1>
                   <p className="page-subtitle barber-home-subtitle">
-                    {barber.subscription?.plan?.toUpperCase()} paketiniz aktif. Bu ayın doluluğunu, hızlı aksiyonları ve profil eksiklerini tek ekranda görün.
+                    Bu ayın doluluğunu, hızlı aksiyonları ve profil eksiklerini tek ekranda görün.
                   </p>
                   <div className="barber-home-meta">
-                    <span className="barber-home-pill">Plan: {barber.subscription?.plan || 'basic'}</span>
                     <span className="barber-home-pill">E-posta: {String(barber?.email || '').trim() ? 'Tamam' : 'Eksik'}</span>
                     <span className="barber-home-pill">Çalışma günü: {activeWorkingDays}</span>
                   </div>
@@ -1041,9 +1504,9 @@ function BarberHome() {
               </div>
 
               <div className="barber-home-mobile-tabs" role="tablist" aria-label="Mobil ana sayfa sekmeleri">
-                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'today' ? 'active' : ''}`} onClick={() => setMobileHomeTab('today')}>Bugün</button>
                 <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'actions' ? 'active' : ''}`} onClick={() => setMobileHomeTab('actions')}>Aksiyon</button>
-                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'revenue' ? 'active' : ''}`} onClick={() => setMobileHomeTab('revenue')}>Gelir</button>
+                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'today' ? 'active' : ''}`} onClick={() => setMobileHomeTab('today')}>Bugün</button>
+                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'revenue' ? 'active' : ''}`} onClick={() => setMobileHomeTab('revenue')}>Yorumlar</button>
                 <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'settings' ? 'active' : ''}`} onClick={() => setMobileHomeTab('settings')}>Ayarlar</button>
               </div>
 
@@ -1059,6 +1522,7 @@ function BarberHome() {
                 ))}
               </div>
 
+              {isMasterUser && (
               <div className={`barber-home-panel barber-home-alert-queue-panel barber-home-critical-panel ${mobileSectionClass('actions')}`}>
                 <div className="barber-home-panel-head">
                   <div>
@@ -1067,6 +1531,11 @@ function BarberHome() {
                   </div>
                   <span className="barber-home-panel-badge info">{actionableAlertCount} aksiyon bekliyor</span>
                 </div>
+                {!isMasterUser && (
+                  <div className="alert alert-info py-2 px-3 mb-3">
+                    Bu bölüm işletme hesabında yalnızca görüntülenir. İşlemler usta hesabından yapılır.
+                  </div>
+                )}
 
                 {dashboardBookedSlots.length > 0 ? (
                   <div className="barber-home-alert-queue-list">
@@ -1094,24 +1563,28 @@ function BarberHome() {
                               <span className="badge bg-warning text-dark">Müşteri yanıtı bekleniyor</span>
                             </div>
                           ) : slotStatusLc === 'reschedule_pending_barber' ? (
-                            <div className="barber-home-alert-queue-actions">
-                              <button
-                                type="button"
-                                className="btn btn-success btn-sm"
-                                onClick={() => handleFinalizeRescheduleFromAlerts(slot, 'approve')}
-                                disabled={isSaving}
-                              >
-                                Son Onay Ver
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-outline-danger btn-sm"
-                                onClick={() => handleFinalizeRescheduleFromAlerts(slot, 'reject')}
-                                disabled={isSaving}
-                              >
-                                Son Onayı Reddet
-                              </button>
-                            </div>
+                            isMasterUser ? (
+                              <div className="barber-home-alert-queue-actions">
+                                <button
+                                  type="button"
+                                  className="btn btn-success btn-sm"
+                                  onClick={() => handleFinalizeRescheduleFromAlerts(slot, 'approve')}
+                                  disabled={isSaving}
+                                >
+                                  Son Onay Ver
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-outline-danger btn-sm"
+                                  onClick={() => handleFinalizeRescheduleFromAlerts(slot, 'reject')}
+                                  disabled={isSaving}
+                                >
+                                  Son Onayı Reddet
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="badge bg-secondary">Sadece görüntüleme</span>
+                            )
                           ) : isEditing ? (
                             <div className="barber-home-alert-queue-editor">
                               <input
@@ -1134,61 +1607,67 @@ function BarberHome() {
                                 }))}
                                 disabled={isSaving}
                               />
-                              <div className="barber-home-alert-queue-actions compact">
-                                <button
-                                  type="button"
-                                  className="btn btn-primary btn-sm"
-                                  onClick={() => handleRescheduleFromAlerts(slot)}
-                                  disabled={isSaving}
-                                >
-                                  Kaydet
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn btn-outline-secondary btn-sm"
-                                  onClick={() => setEditingAlertSlotId('')}
-                                  disabled={isSaving}
-                                >
-                                  Vazgeç
-                                </button>
-                              </div>
+                              {isMasterUser && (
+                                <div className="barber-home-alert-queue-actions compact">
+                                  <button
+                                    type="button"
+                                    className="btn btn-primary btn-sm"
+                                    onClick={() => handleRescheduleFromAlerts(slot)}
+                                    disabled={isSaving}
+                                  >
+                                    Kaydet
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-outline-secondary btn-sm"
+                                    onClick={() => setEditingAlertSlotId('')}
+                                    disabled={isSaving}
+                                  >
+                                    Vazgeç
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           ) : (
-                            <div className="barber-home-alert-queue-actions">
-                              <button
-                                type="button"
-                                className="btn btn-success btn-sm"
-                                onClick={() => handleApproveFromAlerts(slot)}
-                                disabled={isSaving}
-                              >
-                                Onayla
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-warning btn-sm"
-                                onClick={() => startRescheduleFromAlerts(slot)}
-                                disabled={isSaving}
-                              >
-                                Saat Düzenle
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-danger btn-sm"
-                                onClick={() => setConfirmAction({
-                                  kind: 'cancel-alert',
-                                  slot,
-                                  title: 'Randevuyu İptal Et',
-                                  message: `${slot.customerName || slot.customer?.name || 'Bu müşteri'} için iptal sebebini yazarak işlemi tamamlayın.`,
-                                  confirmText: 'İptal Et',
-                                  variant: 'danger',
-                                  showReason: true,
-                                  reasonValue: 'Berber tarafından iptal edildi',
-                                })}
-                                disabled={isSaving}
-                              >
-                                İptal
-                              </button>
-                            </div>
+                            isMasterUser ? (
+                              <div className="barber-home-alert-queue-actions">
+                                <button
+                                  type="button"
+                                  className="btn btn-success btn-sm"
+                                  onClick={() => handleApproveFromAlerts(slot)}
+                                  disabled={isSaving}
+                                >
+                                  Onayla
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-warning btn-sm"
+                                  onClick={() => startRescheduleFromAlerts(slot)}
+                                  disabled={isSaving}
+                                >
+                                  Saat Düzenle
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-danger btn-sm"
+                                  onClick={() => setConfirmAction({
+                                    kind: 'cancel-alert',
+                                    slot,
+                                    title: 'Randevuyu İptal Et',
+                                    message: `${slot.customerName || slot.customer?.name || 'Bu müşteri'} için iptal sebebini yazarak işlemi tamamlayın.`,
+                                    confirmText: 'İptal Et',
+                                    variant: 'danger',
+                                    showReason: true,
+                                    reasonValue: 'Berber tarafından iptal edildi',
+                                  })}
+                                  disabled={isSaving}
+                                >
+                                  İptal
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="badge bg-secondary">Sadece görüntüleme</span>
+                            )
                           )}
                         </div>
                       );
@@ -1198,6 +1677,7 @@ function BarberHome() {
                   <div className="barber-home-empty-state">Şu an bekleyen yeni randevu yok.</div>
                 )}
               </div>
+              )}
 
               <div className={`barber-home-panel barber-home-alert-queue-panel barber-home-confirmed-panel ${mobileSectionClass('today')}`}>
                 <div className="barber-home-panel-head">
@@ -1212,36 +1692,63 @@ function BarberHome() {
                   <div className="barber-home-alert-queue-list">
                     <div className="barber-home-confirmed-group">
                       <div className="barber-home-confirmed-group-title">Bugün ({todayConfirmedSlots.length})</div>
-                      {todayConfirmedSlots.length > 0 ? todayConfirmedSlots.map((slot) => (
-                        <div key={`confirmed-today-${slot._id}`} className="barber-home-alert-queue-item barber-home-confirmed-item">
-                          <div className="barber-home-alert-queue-meta">
-                            <div className="barber-home-alert-queue-title">{slot.customerName || slot.customer?.name || 'İsimsiz Müşteri'}</div>
-                            <div className="barber-home-alert-queue-subtitle barber-home-confirmed-subtitle">
-                              <span className="barber-home-confirmed-date">{formatDateDayMonthYear(slot.date)}</span>
-                              <span className="barber-home-confirmed-time">{slot.time || '--:--'}</span>
-                              <span>{slot.service?.name || slot.customer?.service || 'Hizmet seçilmedi'}</span>
+                      {todayConfirmedSlots.length > 0 ? todayConfirmedSlots.map((slot) => {
+                        const isSaving = pendingSlotActionId === slot._id;
+                        const canShowCompleteAction = isCompletionActionReady(slot, currentCalendarDate);
+                        const confirmedMasterName = String(slot?.assignedMaster?.name || '').trim();
+
+                        return (
+                          <div key={`confirmed-today-${slot._id}`} className="barber-home-alert-queue-item barber-home-confirmed-item">
+                            <div className="barber-home-alert-queue-meta">
+                              <div className="barber-home-alert-queue-title">{slot.customerName || slot.customer?.name || 'İsimsiz Müşteri'}</div>
+                              <div className="barber-home-alert-queue-subtitle barber-home-confirmed-subtitle">
+                                <span className="barber-home-confirmed-date">{formatDateDayMonthYear(slot.date)}</span>
+                                <span className="barber-home-confirmed-time">{slot.time || '--:--'}</span>
+                                {confirmedMasterName && (
+                                  <span className="barber-home-confirmed-master">🧑‍🔧 {confirmedMasterName}</span>
+                                )}
+                                <span>{slot.service?.name || slot.customer?.service || 'Hizmet seçilmedi'}</span>
+                              </div>
+                            </div>
+                            <div className="barber-home-alert-queue-actions">
+                              <span className="badge bg-success">Bugün</span>
+                              {isMasterUser && canShowCompleteAction && (
+                                <button
+                                  type="button"
+                                  className="btn btn-outline-success btn-sm"
+                                  onClick={() => handleCompleteConfirmedSlot(slot)}
+                                  disabled={isSaving}
+                                >
+                                  Tamamlandı
+                                </button>
+                              )}
                             </div>
                           </div>
-                          <span className="badge bg-success">Bugün</span>
-                        </div>
-                      )) : <div className="barber-home-empty-state">Bugün onaylı randevu yok.</div>}
+                        );
+                      }) : <div className="barber-home-empty-state">Bugün onaylı randevu yok.</div>}
                     </div>
 
                     <div className="barber-home-confirmed-group">
                       <div className="barber-home-confirmed-group-title">Yaklaşan ({upcomingConfirmedSlots.length})</div>
-                      {upcomingConfirmedSlots.length > 0 ? upcomingConfirmedSlots.slice(0, 8).map((slot) => (
-                        <div key={`confirmed-upcoming-${slot._id}`} className="barber-home-alert-queue-item barber-home-confirmed-item">
-                          <div className="barber-home-alert-queue-meta">
-                            <div className="barber-home-alert-queue-title">{slot.customerName || slot.customer?.name || 'İsimsiz Müşteri'}</div>
-                            <div className="barber-home-alert-queue-subtitle barber-home-confirmed-subtitle">
-                              <span className="barber-home-confirmed-date">{formatDateDayMonthYear(slot.date)}</span>
-                              <span className="barber-home-confirmed-time">{slot.time || '--:--'}</span>
-                              <span>{slot.service?.name || slot.customer?.service || 'Hizmet seçilmedi'}</span>
+                      {upcomingConfirmedSlots.length > 0 ? upcomingConfirmedSlots.slice(0, 8).map((slot) => {
+                        const confirmedMasterName = String(slot?.assignedMaster?.name || '').trim();
+                        return (
+                          <div key={`confirmed-upcoming-${slot._id}`} className="barber-home-alert-queue-item barber-home-confirmed-item">
+                            <div className="barber-home-alert-queue-meta">
+                              <div className="barber-home-alert-queue-title">{slot.customerName || slot.customer?.name || 'İsimsiz Müşteri'}</div>
+                              <div className="barber-home-alert-queue-subtitle barber-home-confirmed-subtitle">
+                                <span className="barber-home-confirmed-date">{formatDateDayMonthYear(slot.date)}</span>
+                                <span className="barber-home-confirmed-time">{slot.time || '--:--'}</span>
+                                {confirmedMasterName && (
+                                  <span className="barber-home-confirmed-master">🧑‍🔧 {confirmedMasterName}</span>
+                                )}
+                                <span>{slot.service?.name || slot.customer?.service || 'Hizmet seçilmedi'}</span>
+                              </div>
                             </div>
+                            <span className="badge bg-success">Yaklaşan</span>
                           </div>
-                          <span className="badge bg-success">Yaklaşan</span>
-                        </div>
-                      )) : <div className="barber-home-empty-state">Yaklaşan onaylı randevu yok.</div>}
+                        );
+                      }) : <div className="barber-home-empty-state">Yaklaşan onaylı randevu yok.</div>}
                     </div>
                   </div>
                 ) : (
@@ -1250,9 +1757,9 @@ function BarberHome() {
               </div>
 
               <div className={`stat-grid barber-home-stats-grid ${mobileSectionClass('today')}`}>
-                <button type="button" className="stat-card barber-home-stat-card-button" onClick={() => openSummaryModal('confirmed')}>
-                  <div className="stat-card-label">✅ Onaylı Randevu</div>
-                  <div className="stat-card-value">{dashboardAppointmentStats.confirmed}</div>
+                <button type="button" className="stat-card barber-home-stat-card-button" onClick={() => openSummaryModal('today-approved')}>
+                  <div className="stat-card-label">✅ Bugünkü Onaylı Randevu</div>
+                  <div className="stat-card-value">{todayApprovedSummarySlots.length}</div>
                 </button>
                 <button type="button" className="stat-card barber-home-stat-card-button" onClick={() => openSummaryModal('rejected')}>
                   <div className="stat-card-label">⛔ Reddedilen Randevu</div>
@@ -1323,76 +1830,62 @@ function BarberHome() {
                 <div className="barber-home-panel">
                   <div className="barber-home-panel-head">
                     <div>
-                      <h4 className="barber-home-panel-title">Bugünün Operasyonu</h4>
-                      <p className="barber-home-panel-subtitle">Slot ve stok mantığında günlük akışı özetleyin.</p>
+                      <h4 className="barber-home-panel-title">Müşteri Yorumları</h4>
+                      <p className="barber-home-panel-subtitle">Müşterilerden gelen son yorumları burada görün.</p>
                     </div>
+                    <span className="barber-home-panel-badge info">{latestReviews.length} yorum</span>
                   </div>
 
-                  <div className="barber-home-operation-grid">
-                    <div className="barber-home-operation-card">
-                      <span>Bugün ilk müsait saat</span>
-                      <strong>{dashboardAppointmentStats.available > 0 ? 'Mevcut' : 'Doldu'}</strong>
+                  {latestReviews.length > 0 ? (
+                    <div className="barber-home-review-list">
+                      {latestReviews.map((review, index) => (
+                        <div key={`${review.customerId || 'customer'}-${review.createdAt || index}`} className="barber-home-review-item">
+                          <div className="barber-home-review-head">
+                            <strong>{review.customerName || 'Müşteri'}</strong>
+                            <span>⭐ {Number(review.rating || 0).toFixed(1)}</span>
+                          </div>
+                          <p>{String(review.comment || '').trim() || 'Yorum bırakılmadı.'}</p>
+                          <small>{formatDateTimeShortTr(review.createdAt)}</small>
+                        </div>
+                      ))}
                     </div>
-                    <div className="barber-home-operation-card">
-                      <span>İptal edilen slot</span>
-                      <strong>{dashboardAppointmentStats.cancelled}</strong>
-                    </div>
-                    <div className="barber-home-operation-card">
-                      <span>Çalışma günü</span>
-                      <strong>{activeWorkingDays}</strong>
-                    </div>
-                    <div className="barber-home-operation-card">
-                      <span>Bu ay onaylı ciro</span>
-                      <strong>₺{dashboardRevenueEstimate.toLocaleString('tr-TR')}</strong>
-                    </div>
-                  </div>
+                  ) : (
+                    <div className="barber-home-empty-state">Henüz müşteri yorumu yok.</div>
+                  )}
                 </div>
 
                 <div className="barber-home-panel">
                   <div className="barber-home-panel-head">
                     <div>
-                      <h4 className="barber-home-panel-title">Aylık Kazanç</h4>
-                      <p className="barber-home-panel-subtitle">Her ayın onaylı ve tamamlanan randevu toplamı.</p>
+                      <h4 className="barber-home-panel-title">Ustalar</h4>
+                      <p className="barber-home-panel-subtitle">Usta ekleme, düzenleme, silme ve yetki ayarları artık sol menüdeki Ustalar alanında.</p>
                     </div>
-                    <span className="barber-home-panel-badge success">{currentYear}</span>
+                    <span className="barber-home-panel-badge success">{salonMasters.length} usta</span>
+                  </div>
+                  <div className="barber-home-master-list">
+                    {homeVisibleMasters.length > 0 ? homeVisibleMasters.map((master, index) => (
+                      <div key={`${master.name || 'master'}-${index}`} className="barber-home-master-item">
+                        <div>
+                          <strong>{master.name || 'İsimsiz Usta'}</strong>
+                          <p>@{String(master.username || '').trim() || 'kullanici-adi-yok'}</p>
+                        </div>
+                        <span className={`badge ${master.isActive === false ? 'bg-secondary' : 'bg-success'}`}>
+                          {master.isActive === false ? 'Pasif' : 'Aktif'}
+                        </span>
+                      </div>
+                    )) : <div className="barber-home-empty-state">Henüz usta eklenmedi.</div>}
                   </div>
 
-                  {monthlyRevenueList.length > 0 ? (
-                    <div className="barber-home-revenue-list">
-                      {monthlyRevenueList.map((monthItem) => (
-                        <div key={monthItem.key} className={`barber-home-revenue-item ${monthItem.isCurrentMonth ? 'current' : ''}`}>
-                          <div>
-                            <strong>{monthItem.label}</strong>
-                            <p>{monthItem.range}</p>
-                          </div>
-                          <div className="barber-home-revenue-meta">
-                            <span className="barber-home-revenue-count">{monthItem.count} işlem</span>
-                            <strong className="barber-home-revenue-amount">₺{monthItem.amount.toLocaleString('tr-TR')}</strong>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="barber-home-empty-state">
-                      Bu yıl için gelir verisi yok. Randevu onaylandıkça aylık kazanç burada görünecek.
+                  {canAccessSection('masters') && (
+                    <div className="d-grid mt-3">
+                      <button type="button" className="btn btn-outline-primary" onClick={() => setActiveSection('masters')}>
+                        Usta Yönetimine Git
+                      </button>
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className={`info-card mt-4 ${mobileSectionClass('settings')}`}>
-                <div className="d-flex flex-wrap justify-content-between align-items-center gap-2">
-                  <div>
-                    <h4 className="mb-1">Üyelik Bilgileri</h4>
-                    <p className="mb-0 text-muted">Plan ve yenileme tarihini takip edin.</p>
-                  </div>
-                  <span className="badge bg-primary">{barber.subscription?.plan?.toUpperCase()}</span>
-                </div>
-                <div className="mt-3 d-flex flex-wrap gap-3">
-                  <div><strong>Plan:</strong> {barber.subscription?.plan}</div>
-                  <div><strong>Bitiş Tarihi:</strong> {new Date(barber.subscription?.expiresAt).toLocaleDateString('tr-TR')}</div>
-                </div>
-              </div>
             </div>
           )}
 
@@ -1477,6 +1970,192 @@ function BarberHome() {
             </div>
           )}
 
+          {/* Masters Section */}
+          {activeSection === 'masters' && (
+            <div>
+              <h1 className="page-title">Ustalar</h1>
+              <p className="page-subtitle">Usta hesaplarını, şifrelerini ve panel yetkilerini yönetin</p>
+
+              <div className="barber-home-panel mb-4">
+                <div className="barber-home-panel-head">
+                  <div>
+                    <h4 className="barber-home-panel-title">Yeni Usta Ekle</h4>
+                    <p className="barber-home-panel-subtitle">Usta hesabı için kullanıcı adı ve şifre belirleyin.</p>
+                  </div>
+                </div>
+                <form className="barber-home-master-advanced-form" onSubmit={handleAddMaster}>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Usta adı"
+                    value={masterDraft.name}
+                    onChange={(e) => setMasterDraft((prev) => ({ ...prev, name: e.target.value }))}
+                    disabled={isSavingMaster}
+                  />
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Uzmanlık (opsiyonel)"
+                    value={masterDraft.specialty}
+                    onChange={(e) => setMasterDraft((prev) => ({ ...prev, specialty: e.target.value }))}
+                    disabled={isSavingMaster}
+                  />
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Kullanıcı adı"
+                    value={masterDraft.username}
+                    onChange={(e) => setMasterDraft((prev) => ({ ...prev, username: e.target.value }))}
+                    disabled={isSavingMaster}
+                  />
+                  <input
+                    type="password"
+                    className="form-control"
+                    placeholder="Şifre (min 6)"
+                    value={masterDraft.password}
+                    onChange={(e) => setMasterDraft((prev) => ({ ...prev, password: e.target.value }))}
+                    disabled={isSavingMaster}
+                  />
+
+                  <div className="barber-home-master-permissions">
+                    {MASTER_PERMISSION_META.map((permission) => (
+                      <label key={`new-master-perm-${permission.key}`} className="form-check form-switch">
+                        <input
+                          className="form-check-input"
+                          type="checkbox"
+                          checked={Boolean(masterDraft.permissions?.[permission.key])}
+                          onChange={(e) => setMasterDraft((prev) => ({
+                            ...prev,
+                            permissions: {
+                              ...(prev.permissions || defaultMasterPermissions()),
+                              [permission.key]: e.target.checked,
+                            },
+                          }))}
+                          disabled={isSavingMaster}
+                        />
+                        <span className="form-check-label">{permission.label}</span>
+                      </label>
+                    ))}
+                  </div>
+
+                  <button type="submit" className="btn btn-primary" disabled={isSavingMaster}>
+                    {isSavingMaster ? 'Ekleniyor...' : 'Usta Ekle'}
+                  </button>
+                </form>
+              </div>
+
+              <div className="barber-home-panel">
+                <div className="barber-home-panel-head">
+                  <div>
+                    <h4 className="barber-home-panel-title">Kayıtlı Ustalar</h4>
+                    <p className="barber-home-panel-subtitle">Düzenle, şifre yenile veya sil.</p>
+                  </div>
+                  <span className="barber-home-panel-badge success">{salonMasters.length} usta</span>
+                </div>
+
+                {salonMasters.length > 0 ? (
+                  <div className="barber-home-master-list">
+                    {salonMasters.map((master, index) => {
+                      if (editingHomeMasterIndex === index) {
+                        return (
+                          <div key={`${master._id || master.name || 'master'}-${index}`} className="barber-home-master-item barber-home-master-item-advanced">
+                            <div className="barber-home-master-inline-editor barber-home-master-inline-editor-advanced">
+                              <input
+                                type="text"
+                                className="form-control form-control-sm"
+                                placeholder="Usta adı"
+                                value={editingHomeMasterDraft.name}
+                                onChange={(e) => setEditingHomeMasterDraft((prev) => ({ ...prev, name: e.target.value }))}
+                                disabled={isSavingMaster}
+                              />
+                              <input
+                                type="text"
+                                className="form-control form-control-sm"
+                                placeholder="Uzmanlık"
+                                value={editingHomeMasterDraft.specialty}
+                                onChange={(e) => setEditingHomeMasterDraft((prev) => ({ ...prev, specialty: e.target.value }))}
+                                disabled={isSavingMaster}
+                              />
+                              <input
+                                type="text"
+                                className="form-control form-control-sm"
+                                placeholder="Kullanıcı adı"
+                                value={editingHomeMasterDraft.username}
+                                onChange={(e) => setEditingHomeMasterDraft((prev) => ({ ...prev, username: e.target.value }))}
+                                disabled={isSavingMaster}
+                              />
+                              <input
+                                type="password"
+                                className="form-control form-control-sm"
+                                placeholder="Yeni şifre (opsiyonel)"
+                                value={editingHomeMasterDraft.password}
+                                onChange={(e) => setEditingHomeMasterDraft((prev) => ({ ...prev, password: e.target.value }))}
+                                disabled={isSavingMaster}
+                              />
+                              <label className="form-check form-switch m-0">
+                                <input
+                                  className="form-check-input"
+                                  type="checkbox"
+                                  checked={editingHomeMasterDraft.isActive !== false}
+                                  onChange={(e) => setEditingHomeMasterDraft((prev) => ({ ...prev, isActive: e.target.checked }))}
+                                  disabled={isSavingMaster}
+                                />
+                                <span className="form-check-label">Aktif</span>
+                              </label>
+                              <div className="barber-home-master-permissions">
+                                {MASTER_PERMISSION_META.map((permission) => (
+                                  <label key={`edit-master-perm-${permission.key}-${index}`} className="form-check form-switch">
+                                    <input
+                                      className="form-check-input"
+                                      type="checkbox"
+                                      checked={Boolean(editingHomeMasterDraft.permissions?.[permission.key])}
+                                      onChange={(e) => setEditingHomeMasterDraft((prev) => ({
+                                        ...prev,
+                                        permissions: {
+                                          ...(prev.permissions || defaultMasterPermissions()),
+                                          [permission.key]: e.target.checked,
+                                        },
+                                      }))}
+                                      disabled={isSavingMaster}
+                                    />
+                                    <span className="form-check-label">{permission.label}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="barber-home-master-actions">
+                              <button type="button" className="btn btn-success btn-sm" onClick={() => handleUpdateHomeMaster(index)} disabled={isSavingMaster}>Kaydet</button>
+                              <button type="button" className="btn btn-outline-secondary btn-sm" onClick={cancelEditHomeMaster} disabled={isSavingMaster}>Vazgeç</button>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div key={`${master._id || master.name || 'master'}-${index}`} className="barber-home-master-item">
+                          <div>
+                            <strong>{master.name || 'İsimsiz Usta'}</strong>
+                            <p>@{String(master.username || '').trim() || '-'}</p>
+                            <p>{String(master.specialty || '').trim() || 'Uzmanlık belirtilmedi'}</p>
+                          </div>
+                          <div className="barber-home-master-actions">
+                            <span className={`badge ${master.isActive === false ? 'bg-secondary' : 'bg-success'}`}>
+                              {master.isActive === false ? 'Pasif' : 'Aktif'}
+                            </span>
+                            <button type="button" className="btn btn-outline-primary btn-sm" onClick={() => startEditHomeMaster(master, index)} disabled={isSavingMaster}>Düzenle</button>
+                            <button type="button" className="btn btn-outline-danger btn-sm" onClick={() => handleDeleteHomeMaster(index)} disabled={isSavingMaster}>Sil</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="barber-home-empty-state">Henüz usta eklenmedi.</div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Calendar Section */}
           {activeSection === 'calendar' && (
             <div>
@@ -1487,6 +2166,27 @@ function BarberHome() {
                 <div className="alert alert-danger alert-dismissible fade show">
                   <strong>Hata!</strong> {slotsError}
                   <button type="button" className="btn-close" onClick={() => setSlotsError('')}></button>
+                </div>
+              )}
+
+              {recentlyDeletedSlot && (
+                <div className="barber-calendar-inline-undo" role="status" aria-live="polite">
+                  <div className="barber-calendar-inline-undo-copy">
+                    <strong>🗑️ Randevu müşteri görünümünden kaldırıldı</strong>
+                    <span>
+                      {recentlyDeletedSlot.customerName} • {formatDateDayMonthYear(recentlyDeletedSlot.date)} • {recentlyDeletedSlot.time || '--:--'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="barber-calendar-inline-undo-btn"
+                    onClick={handleUndoDeleteSlot}
+                    title="Silme işlemini geri al"
+                    aria-label="Silme işlemini geri al"
+                    disabled={pendingSlotActionId === recentlyDeletedSlot._id}
+                  >
+                    ↩️
+                  </button>
                 </div>
               )}
 
@@ -1529,7 +2229,7 @@ function BarberHome() {
                 </div>
               </div>
 
-              {visibleMySlots.length > 0 ? (
+              {calendarSlotsForView.length > 0 ? (
                 <div className="barber-calendar-slots">
                   <div className="barber-calendar-slots-header">
                     <div className="d-flex justify-content-between align-items-center gap-2 flex-wrap">
@@ -1553,14 +2253,19 @@ function BarberHome() {
                     </div>
                   </div>
                   <div className="barber-slots-grid">
-                    {visibleMySlots.map(s => {
+                    {calendarSlotsForView.map(s => {
                       const statusLc = String(s.status || '').toLowerCase();
+                      const isRecentlyDeletedSlot = String(recentlyDeletedSlotId || '') === String(s._id || '');
+                      const isVirtualSlot = Boolean(s.isVirtualSlot);
                       const hasAppointment = Boolean(s.customerName || s.customer?.name);
+                      const assignedMasterName = String(s.assignedMaster?.name || '').trim();
+                      const canAssignMaster = false;
                       const showPastOnly = s.isPastSlot && statusLc === 'available' && !hasAppointment;
-                      const hideActions = s.isPastSlot;
-                      const canEditManual = !s.isPastSlot && Boolean(s.isManualAppointment) && !s.isHistoricalRecord;
-                      const canDeleteManual = !s.isPastSlot && Boolean(s.isManualAppointment) && !s.isHistoricalRecord;
-                      const canManageAvailability = !s.isPastSlot && ['available', 'blocked'].includes(statusLc);
+                      const hideActions = s.isPastSlot && !s.isHistoricalRecord;
+                      const canEditManual = Boolean(s.isManualAppointment);
+                      const canDeleteManual = Boolean(s.isManualAppointment);
+                      const canManageAvailability = !isVirtualSlot && !s.isPastSlot && ['available', 'blocked'].includes(statusLc);
+                      const canCreateManual = !s.isPastSlot && statusLc === 'available';
 
                       return (
                       <div key={s._id} className={`barber-slot-card barber-slot-${s.status} ${s.isPastSlot ? 'barber-slot-past' : ''}`}>
@@ -1573,6 +2278,12 @@ function BarberHome() {
                             <span className={`badge ${showPastOnly ? 'bg-dark' : (s.status === 'confirmed' ? 'bg-success' : s.status === 'available' ? 'bg-secondary' : s.status === 'booked' ? 'bg-info' : 'bg-danger')}`}>
                               {showPastOnly ? 'Geçti' : (s.status === 'confirmed' ? '✓ Onaylı' : s.status === 'available' ? '◯ Müsait' : s.status === 'booked' ? '◇ Yeni' : '✗ Kapalı')}
                             </span>
+                            {s.isHistoricalRecord && (
+                              <span className="badge bg-warning text-dark">Geçmiş Kayıt</span>
+                            )}
+                            {isRecentlyDeletedSlot && (
+                              <span className="badge bg-warning text-dark">↩️ Geri Alınabilir</span>
+                            )}
                           </div>
                           {(s.customerName || s.customer?.name) && (
                             <div className="barber-slot-customer">
@@ -1584,8 +2295,23 @@ function BarberHome() {
                               {s.service.name}
                             </div>
                           )}
+                          {assignedMasterName && (
+                            <div className="barber-slot-service">
+                              👤 Usta: {assignedMasterName}
+                            </div>
+                          )}
                         </div>
-                        {!hideActions && <div className="barber-slot-actions">
+                        {!hideActions && isMasterUser && <div className="barber-slot-actions">
+                          {isRecentlyDeletedSlot && (
+                            <button
+                              title="Silme işlemini geri al"
+                              className="barber-slot-action-btn"
+                              onClick={handleUndoDeleteSlot}
+                              disabled={pendingSlotActionId === recentlyDeletedSlot?._id}
+                            >
+                              ↩️
+                            </button>
+                          )}
                           {canEditManual && (
                             <button title="Düzenle" className="barber-slot-action-btn" onClick={() => {
                               setSelectedSlotForEdit(s);
@@ -1594,9 +2320,13 @@ function BarberHome() {
                               ✏️
                             </button>
                           )}
-                          {canManageAvailability && s.status === 'available' && (
+                          {canCreateManual && (
                             <button title="Randevu Ekle" className="barber-slot-action-btn" onClick={() => {
-                              setSelectedSlotForManual(s);
+                              if (isVirtualSlot) {
+                                setSelectedSlotForManual({ date: s.date, time: s.time });
+                              } else {
+                                setSelectedSlotForManual(s);
+                              }
                               setShowCreateManualSlot(true);
                             }}>
                               ➕
@@ -1631,14 +2361,42 @@ function BarberHome() {
                             setConfirmAction({
                               kind: 'delete-slot',
                               slot: s,
-                              title: 'Randevuyu Gizle',
-                              message: 'Bu manuel randevuyu gizlemek istediğinizden emin misiniz? Geri alabilirsiniz, ancak sayfa yenilenince uyarı kalkar.',
-                              confirmText: 'Gizle',
+                              title: 'Randevu Silinsin mi?',
+                              message: 'Bu randevu müşteri tarafında silinmiş gibi görünecek ve takvimden kaldırılacak. Onaylıyor musunuz?',
+                              confirmText: 'Sil',
                               variant: 'danger',
                             });
                           }}>
                             🗑️
                           </button>}
+                          {canAssignMaster && (
+                            <div className="d-flex align-items-center gap-2 ms-2">
+                              <select
+                                className="form-select form-select-sm"
+                                style={{ minWidth: '170px' }}
+                                value={slotMasterDrafts[s._id] ?? String(s.assignedMaster?.masterId || '')}
+                                onChange={(e) => setSlotMasterDrafts((prev) => ({ ...prev, [s._id]: e.target.value }))}
+                                disabled={pendingSlotActionId === s._id}
+                              >
+                                <option value="">Usta atanmamış</option>
+                                {salonMasters
+                                  .filter((master) => master.isActive !== false)
+                                  .map((master) => (
+                                    <option key={master._id || master.username || master.name} value={master._id || ''}>
+                                      {master.name} @{master.username || '-'}
+                                    </option>
+                                  ))}
+                              </select>
+                              <button
+                                type="button"
+                                className="btn btn-outline-primary btn-sm"
+                                onClick={() => handleAssignMasterToSlot(s, slotMasterDrafts[s._id] ?? String(s.assignedMaster?.masterId || ''))}
+                                disabled={pendingSlotActionId === s._id}
+                              >
+                                Ata
+                              </button>
+                            </div>
+                          )}
                         </div>}
                       </div>
                     )})}
@@ -1656,27 +2414,194 @@ function BarberHome() {
           {activeSection === 'stats' && (
             <div>
               <h1 className="page-title">İstatistikler</h1>
-              <p className="page-subtitle">İşletmeniz hakkında metrikler</p>
+              <p className="page-subtitle">Canlı randevu ve gelir verileriyle işletme performansı</p>
 
               <div className="stat-grid">
                 <div className="stat-card" style={{ borderColor: '#3498db' }}>
-                  <div className="stat-card-label">📅 Toplam Randevu</div>
-                  <div className="stat-card-value">124</div>
+                  <div className="stat-card-label">📅 Toplam Takvim Kaydı</div>
+                  <div className="stat-card-value">{dashboardAppointmentStats.total}</div>
                 </div>
                 <div className="stat-card" style={{ borderColor: '#27ae60' }}>
                   <div className="stat-card-label">💰 Bu Ay Gelir</div>
-                  <div className="stat-card-value">₺15.4K</div>
+                  <div className="stat-card-value">₺{dashboardRevenueEstimate.toLocaleString('tr-TR')}</div>
                 </div>
                 <div className="stat-card" style={{ borderColor: '#f39c12' }}>
-                  <div className="stat-card-label">⭐ Puanınız</div>
-                  <div className="stat-card-value">4.9</div>
+                  <div className="stat-card-label">✅ Karar Başarı Oranı</div>
+                  <div className="stat-card-value">%{actionableDecisionRate}</div>
+                </div>
+                <div className="stat-card" style={{ borderColor: '#8e44ad' }}>
+                  <div className="stat-card-label">🧾 Bu Ay Onaylı/Tamamlanan</div>
+                  <div className="stat-card-value">{currentMonthSummarySlots.length}</div>
                 </div>
               </div>
 
               <div className="info-card">
-                <h4>Detaylı İstatistikler</h4>
-                <p className="text-muted">Burada daha detaylı raporlar görüntülenecek...</p>
+                <div className="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                  <div>
+                    <h4 className="mb-1">Aylık Gelir Trendi</h4>
+                    <p className="text-muted mb-0">Onaylı ve tamamlanan randevuların aylık toplamı.</p>
+                  </div>
+                  <span className="badge bg-primary">{currentYear}</span>
+                </div>
+
+                {monthlyRevenueTrend.currentMonth ? (
+                  <div className="mt-3">
+                    <div className="d-flex flex-wrap gap-3 align-items-center mb-2">
+                      <strong>{monthlyRevenueTrend.currentMonth.label}</strong>
+                      <span>₺{(monthlyRevenueTrend.currentMonth.amount || 0).toLocaleString('tr-TR')}</span>
+                      <span>{monthlyRevenueTrend.currentMonth.count} randevu</span>
+                    </div>
+                    <p className="text-muted mb-0">
+                      Geçen ay: ₺{(monthlyRevenueTrend.previousMonth?.amount || 0).toLocaleString('tr-TR')}
+                      {' '}•{' '}
+                      <strong style={{ color: monthlyRevenueTrend.isIncrease ? '#1f8f4c' : '#c0392b' }}>
+                        {monthlyRevenueTrend.isIncrease ? 'Artış' : 'Düşüş'}: ₺{Math.abs(monthlyRevenueTrend.diff).toLocaleString('tr-TR')}
+                        {monthlyRevenueTrend.percentChange !== null ? ` (%${Math.abs(monthlyRevenueTrend.percentChange)})` : ''}
+                      </strong>
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-muted mb-0 mt-3">Trend verisi oluşturulamadı.</p>
+                )}
               </div>
+
+              <div className="row g-3 mt-1">
+                <div className="col-12 col-xl-8">
+                  <div className="info-card h-100">
+                    <div className="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                      <div>
+                        <h4 className="mb-1">Aylık Gelir Grafiği</h4>
+                        <p className="text-muted mb-0">Son 6 ayın onaylı/tamamlanan gelir dağılımı.</p>
+                      </div>
+                      <span className="badge bg-success">₺{dashboardRevenueEstimate.toLocaleString('tr-TR')}</span>
+                    </div>
+
+                    <div className="d-flex align-items-end gap-2 mt-4" style={{ minHeight: '220px' }}>
+                      {revenueChartMonths.map((month) => {
+                        const barHeight = Math.max(12, Math.round((Number(month.amount || 0) / revenueChartMax) * 180));
+                        return (
+                          <div key={month.key} className="flex-fill text-center">
+                            <div className="d-flex align-items-end justify-content-center" style={{ minHeight: '190px' }}>
+                              <div
+                                className={`rounded-top ${month.isCurrentMonth ? 'shadow-sm' : ''}`}
+                                style={{
+                                  width: '100%',
+                                  maxWidth: '64px',
+                                  height: `${barHeight}px`,
+                                  background: month.isCurrentMonth
+                                    ? 'linear-gradient(180deg, #2ecc71 0%, #1f8f4c 100%)'
+                                    : 'linear-gradient(180deg, #5dade2 0%, #3498db 100%)',
+                                  transition: 'height 180ms ease',
+                                }}
+                                title={`${month.label}: ₺${Number(month.amount || 0).toLocaleString('tr-TR')}`}
+                              />
+                            </div>
+                            <div className="mt-2 fw-semibold">{month.label}</div>
+                            <small className="text-muted d-block">₺{Number(month.amount || 0).toLocaleString('tr-TR')}</small>
+                            <small className="text-muted d-block">{month.count} işlem</small>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="col-12 col-xl-4">
+                  <div className="info-card h-100">
+                    <h4>En Güçlü Hizmetler</h4>
+                    {topServices.length > 0 ? (
+                      <div className="d-flex flex-column gap-3 mt-3">
+                        {topServices.map((service, index) => {
+                          const serviceMax = Math.max(...topServices.map((item) => item.revenue), 1);
+                          const widthPercent = Math.max(12, Math.round((service.revenue / serviceMax) * 100));
+
+                          return (
+                            <div key={service.name}>
+                              <div className="d-flex justify-content-between align-items-center mb-1">
+                                <small className="text-muted">{index + 1}. {service.name}</small>
+                                <strong>{service.count}</strong>
+                              </div>
+                              <div className="progress" style={{ height: '10px' }}>
+                                <div
+                                  className="progress-bar"
+                                  style={{ width: `${widthPercent}%`, backgroundColor: '#8e44ad' }}
+                                />
+                              </div>
+                              <small className="text-muted d-block mt-1">₺{service.revenue.toLocaleString('tr-TR')}</small>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-muted mb-0 mt-3">Henüz onaylı/tamamlanmış hizmet verisi yok.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="row g-3 mt-1">
+                <div className="col-12 col-xl-6">
+                  <div className="info-card h-100">
+                    <h4>Durum Dağılımı</h4>
+                    <div className="d-flex flex-column gap-3 mt-3">
+                      {statsStatusItems.map((item) => (
+                        <div key={item.key}>
+                          <div className="d-flex justify-content-between align-items-center mb-1">
+                            <small className="text-muted">{item.label}</small>
+                            <strong>{item.value}</strong>
+                          </div>
+                          <div className="progress" style={{ height: '8px' }}>
+                            <div className="progress-bar" style={{ width: `${item.percent}%`, backgroundColor: '#3498db' }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="col-12 col-xl-6">
+                  <div className="info-card h-100">
+                    <h4>En Çok Satılan Hizmetler</h4>
+                    {topServices.length > 0 ? (
+                      <div className="d-flex flex-column gap-2 mt-3">
+                        {topServices.map((service, index) => (
+                          <div key={service.name} className="d-flex justify-content-between align-items-center">
+                            <span>{index + 1}. {service.name}</span>
+                            <span className="text-muted">{service.count} randevu • ₺{service.revenue.toLocaleString('tr-TR')}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-muted mb-0 mt-3">Henüz onaylı/tamamlanmış hizmet verisi yok.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {!isMasterUser && (
+                <div className="info-card mt-3">
+                  <h4>Usta Bazlı Performans</h4>
+                  {masterPerformanceStats.length > 0 ? (
+                    <div className="d-flex flex-column gap-2 mt-3">
+                      {masterPerformanceStats.map((master, index) => (
+                        <div key={master.id} className="d-flex justify-content-between align-items-center">
+                          <span>{index + 1}. {master.name}</span>
+                          <span className="text-muted">{master.count} randevu • ₺{master.revenue.toLocaleString('tr-TR')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-muted mb-0 mt-3">Atanmış usta verisi bulunan onaylı/tamamlanmış randevu henüz yok.</p>
+                  )}
+                </div>
+              )}
+
+              {isMasterUser && (
+                <div className="info-card mt-3">
+                  <h4>Usta Görünümü</h4>
+                  <p className="text-muted mb-0">Bu ekran yalnızca size atanan randevulara göre hesaplanır.</p>
+                </div>
+              )}
             </div>
           )}
 
@@ -1720,28 +2645,6 @@ function BarberHome() {
         </div>
       )}
 
-      {recentlyDeletedSlot && (
-        <div
-          className="alert alert-info alert-dismissible fade show"
-          role="alert"
-          style={{
-            position: 'fixed',
-            top: '140px',
-            right: '20px',
-            zIndex: 1050,
-            maxWidth: '420px',
-            boxShadow: '0 12px 28px rgba(44, 62, 80, 0.15)',
-          }}
-        >
-          <strong className="me-1">Gizlenen randevu:</strong>
-          {recentlyDeletedSlot.customerName} {recentlyDeletedSlot.date} {recentlyDeletedSlot.time}
-          <button type="button" className="btn btn-sm btn-outline-primary ms-3" onClick={handleUndoDeleteSlot}>
-            Geri Al
-          </button>
-          <button type="button" className="btn-close ms-2" onClick={() => setRecentlyDeletedSlot(null)}></button>
-        </div>
-      )}
-
       <ActionConfirmModal
         show={Boolean(confirmAction)}
         title={confirmAction?.title || 'İşlemi Onayla'}
@@ -1774,12 +2677,17 @@ function BarberHome() {
                       const serviceName = getSlotServiceName(slot);
                       const statusLabel = getSlotStatusLabel(slot.status);
                       const statusTone = getSlotStatusTone(slot.status);
+                      const summaryMasterName = String(slot?.assignedMaster?.name || '').trim();
+                      const showSummaryMaster = ['today-approved', 'current-month', 'rejected'].includes(String(summaryModal?.type || ''));
                       return (
                         <div key={slot._id} className="barber-home-summary-item">
                           <div className="barber-home-summary-item-main">
                             <div className="barber-home-summary-name">
                               <strong>{customer.firstName}</strong>
                               <span>{customer.lastName}</span>
+                              {showSummaryMaster && summaryMasterName && (
+                                <span className="barber-home-summary-master">🧑‍🔧 {summaryMasterName}</span>
+                              )}
                             </div>
                             <div className="barber-home-summary-meta">
                               <span>{formatDateDayMonthYear(slot.date)} • {slot.time || '--:--'}</span>

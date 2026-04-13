@@ -28,9 +28,99 @@ app.use('/api/locations', locationsRoutes);
 const barberRoutes = require('./src/routes/barberRoutes');
 app.use('/api/barbers', barberRoutes);
 
+async function ensureSlotIndexes() {
+  try {
+    const Slot = require('./src/models/Slot');
+    const existingIndexes = await Slot.collection.indexes();
+    const hasLegacyUnique = existingIndexes.some((idx) => idx && idx.name === 'barber_1_date_1_time_1');
+
+    if (hasLegacyUnique) {
+      await Slot.collection.dropIndex('barber_1_date_1_time_1');
+      console.log('🧹 Eski slot indexi kaldırıldı: barber_1_date_1_time_1');
+    }
+
+    await Slot.createIndexes();
+    console.log('✅ Slot indexleri doğrulandı');
+  } catch (error) {
+    console.warn('⚠️ Slot index migration atlandı:', error.message);
+  }
+}
+
+async function repairLegacySlotPricing() {
+  try {
+    const Slot = require('./src/models/Slot');
+    const Barber = require('./src/models/Barber');
+
+    const slots = await Slot.find({
+      status: { $in: ['booked', 'confirmed', 'completed'] },
+      $or: [
+        { manualPrice: { $in: [null, 0] } },
+        { 'payment.amount': { $in: [null, 0] } },
+      ],
+    });
+
+    if (!slots.length) {
+      return;
+    }
+
+    const barberIds = [...new Set(slots.map((slot) => String(slot.barber)).filter(Boolean))];
+    const barbers = await Barber.find({ _id: { $in: barberIds } }).select('services');
+    const barberMap = new Map(barbers.map((barber) => [String(barber._id), barber]));
+
+    let repairedCount = 0;
+
+    for (const slot of slots) {
+      const barber = barberMap.get(String(slot.barber));
+      const services = Array.isArray(barber?.services) ? barber.services : [];
+      const serviceRecord = slot.service
+        ? services.id(slot.service)
+        : (slot.customer?.service
+          ? services.find((item) => String(item.name || '').trim().toLowerCase() === String(slot.customer.service || '').trim().toLowerCase())
+          : null);
+      const resolvedPrice = Number(serviceRecord?.price || 0);
+
+      if (resolvedPrice <= 0) {
+        continue;
+      }
+
+      const currentPaymentAmount = Number(slot.payment?.amount || 0);
+      const currentManualPrice = Number(slot.manualPrice || 0);
+      const shouldRepair = currentPaymentAmount <= 0 || currentManualPrice <= 0 || slot.payment?.isPaid !== true;
+
+      if (!shouldRepair) {
+        continue;
+      }
+
+      slot.manualPrice = resolvedPrice;
+      slot.payment = {
+        ...(slot.payment || {}),
+        isPaid: true,
+        amount: resolvedPrice,
+      };
+      if (slot.customer && typeof slot.customer === 'object' && slot.customer.totalPrice == null) {
+        slot.customer.totalPrice = resolvedPrice;
+      }
+      if (!slot.service && serviceRecord?._id) {
+        slot.service = serviceRecord._id;
+      }
+
+      await slot.save();
+      repairedCount += 1;
+    }
+
+    console.log(`💸 Legacy slot fiyatları onarıldı: ${repairedCount}/${slots.length}`);
+  } catch (error) {
+    console.warn('⚠️ Legacy slot fiyat onarımı atlandı:', error.message);
+  }
+}
+
 // MongoDB Bağlantı
 mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('✅ MongoDB bağlandı'))
+  .then(async () => {
+    console.log('✅ MongoDB bağlandı');
+    await ensureSlotIndexes();
+    await repairLegacySlotPricing();
+  })
   .catch(err => {
     console.error('❌ MongoDB hatası:', err.message);
     process.exit(1);
@@ -133,7 +223,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({ success: false, error: 'Sunucu hatası' });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 
 // Cron job'ları başlat
 startCronJobs(io, connectedBarbers);

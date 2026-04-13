@@ -26,6 +26,8 @@ function CreateManualSlotModal({ show, slot, services, onClose, onSuccess }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    const normalizedDate = String(manualDate || '').trim();
+    const normalizedTime = String(manualTime || '').trim().slice(0, 5);
 
     if (!customerName.trim()) {
       setError('Müşteri adı gereklidir');
@@ -37,8 +39,18 @@ function CreateManualSlotModal({ show, slot, services, onClose, onSuccess }) {
       return;
     }
 
-    if (!manualDate || !manualTime) {
+    if (!normalizedDate || !normalizedTime) {
       setError('Tarih ve saat seçiniz');
+      return;
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
+      setError('Geçerli bir tarih giriniz (YYYY-MM-DD)');
+      return;
+    }
+
+    if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(normalizedTime)) {
+      setError('Geçerli bir saat giriniz (HH:mm)');
       return;
     }
 
@@ -46,8 +58,8 @@ function CreateManualSlotModal({ show, slot, services, onClose, onSuccess }) {
 
     try {
       const res = await api.post('/slots/create-manual', {
-        date: manualDate,
-        time: manualTime,
+        date: normalizedDate,
+        time: normalizedTime,
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim() || null,
         serviceId,

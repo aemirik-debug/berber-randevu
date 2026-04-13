@@ -306,21 +306,35 @@
 .customer-shell .home-quick-note-status-pill {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.45rem;
   border-radius: 999px;
   padding: 0.28rem 0.7rem;
   font-size: 0.76rem;
   font-weight: 700;
+  line-height: 1;
   letter-spacing: 0.03em;
   border: 1px solid transparent;
   margin-right: 0.55rem;
   vertical-align: middle;
 }
 
+.customer-shell .home-quick-note-status-pill > span {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
 .customer-shell .home-quick-note-status-pill-pending {
   color: #0b4f8a;
   background: rgba(93, 169, 233, 0.18);
   border-color: rgba(47, 110, 169, 0.28);
+}
+
+.customer-shell .home-quick-note-status-pill-warning {
+  color: #7a4b09;
+  background: rgba(242, 176, 64, 0.2);
+  border-color: rgba(179, 118, 19, 0.3);
 }
 
 .customer-shell .home-quick-note-status-pill-approved {
@@ -369,7 +383,7 @@
 
 .customer-shell .home-quick-note-item-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 0.7rem;
 }
@@ -377,6 +391,7 @@
 .customer-shell .home-quick-note-right {
   display: inline-flex;
   align-items: center;
+  align-self: center;
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 0.35rem;
@@ -444,6 +459,102 @@
   margin-bottom: 0.15rem;
 }
 
+.customer-shell .home-barber-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.customer-shell .home-barber-title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.customer-shell .home-barber-favorite-star {
+  border: none;
+  background: transparent;
+  color: rgba(44, 62, 80, 0.42);
+  font-size: 1.02rem;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.customer-shell .home-barber-favorite-star:hover,
+.customer-shell .home-barber-favorite-star:focus-visible {
+  color: #d18a1f;
+  transform: scale(1.06);
+  outline: none;
+}
+
+.customer-shell .home-barber-favorite-star.is-active {
+  color: #d18a1f;
+}
+
+.customer-shell .home-barber-open-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  padding: 0.2rem 0.58rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.customer-shell .home-barber-open-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.customer-shell .home-barber-open-pill.is-open {
+  color: #166237;
+  background: rgba(79, 186, 123, 0.18);
+  border-color: rgba(39, 140, 81, 0.3);
+}
+
+.customer-shell .home-barber-open-pill.is-open .home-barber-open-dot {
+  background: #2ea85f;
+}
+
+.customer-shell .home-barber-open-pill.is-closed {
+  color: #8d1f30;
+  background: rgba(225, 92, 92, 0.18);
+  border-color: rgba(183, 60, 76, 0.32);
+}
+
+.customer-shell .home-barber-open-pill.is-closed .home-barber-open-dot {
+  background: #c94758;
+}
+
+.customer-shell .home-barber-open-clock {
+  font-size: 0.76rem;
+  line-height: 1;
+}
+
+.customer-shell .home-barber-open-pill:focus-visible {
+  box-shadow: 0 0 0 2px rgba(93, 169, 233, 0.28);
+  outline: none;
+}
+
+.tooltip.availability-tooltip-open {
+  --bs-tooltip-bg: #b83d47;
+  --bs-tooltip-color: #ffffff;
+}
+
+.tooltip.availability-tooltip-closed {
+  --bs-tooltip-bg: #1d8d4b;
+  --bs-tooltip-color: #ffffff;
+}
+
 .customer-shell .home-barber-meta {
   font-size: 0.82rem;
   margin-bottom: 0.15rem;
@@ -496,7 +607,7 @@
 
 .customer-shell .home-past-topline {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
 }
@@ -718,6 +829,121 @@
   background: #ffffff;
   border-color: rgba(44, 62, 80, 0.15) !important;
   box-shadow: 0 2px 8px rgba(44, 62, 80, 0.06);
+}
+
+.customer-shell .business-panel {
+  border: 1px solid rgba(44, 62, 80, 0.12);
+  border-radius: 1rem;
+  overflow: hidden;
+  box-shadow: 0 10px 24px rgba(44, 62, 80, 0.08) !important;
+}
+
+.customer-shell .business-panel-header {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(244, 236, 224, 0.86));
+  border-bottom: 1px solid rgba(44, 62, 80, 0.1);
+  padding: 0.9rem 1rem;
+}
+
+.customer-shell .business-panel-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--cbk-charcoal);
+}
+
+.customer-shell .business-panel-subtitle {
+  font-size: 0.82rem;
+  color: rgba(44, 62, 80, 0.72);
+}
+
+.customer-shell .business-count-badge {
+  border: 1px solid rgba(44, 62, 80, 0.14);
+  color: var(--cbk-charcoal);
+  font-weight: 700;
+}
+
+.customer-shell .business-table thead th {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(44, 62, 80, 0.72);
+  background: rgba(44, 62, 80, 0.03);
+  border-bottom: 1px solid rgba(44, 62, 80, 0.14);
+}
+
+.customer-shell .business-table tbody td {
+  padding-top: 0.82rem;
+  padding-bottom: 0.82rem;
+}
+
+.customer-shell .business-mobile-card {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(247, 241, 232, 0.9));
+  border-color: rgba(44, 62, 80, 0.14) !important;
+  box-shadow: 0 8px 18px rgba(44, 62, 80, 0.06);
+}
+
+.customer-shell .favorite-table-star {
+  color: #d18a1f;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.customer-shell .favorite-wa-link {
+  font-size: 0.78rem;
+  color: #0e7a3f;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.customer-shell .favorite-wa-link:hover,
+.customer-shell .favorite-wa-link:focus-visible {
+  text-decoration: underline;
+  color: #0a5b2f;
+  outline: none;
+}
+
+.customer-shell .favorite-wa-link.disabled {
+  color: rgba(44, 62, 80, 0.5);
+  pointer-events: none;
+}
+
+.customer-shell .favorite-action-group .btn {
+  min-width: 7.4rem;
+}
+
+.customer-shell .appointments-table th {
+  white-space: nowrap;
+  font-size: 0.82rem;
+  letter-spacing: 0.01em;
+}
+
+.customer-shell .appointments-table td {
+  vertical-align: middle;
+}
+
+.customer-shell .appointment-table-business {
+  font-weight: 700;
+  color: var(--cbk-charcoal);
+}
+
+.customer-shell .appointment-table-location {
+  font-size: 0.77rem;
+  color: rgba(44, 62, 80, 0.68);
+}
+
+.customer-shell .appointment-table-price {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--cbk-leather);
+}
+
+.customer-shell .appointment-mobile-detail-row {
+  margin-bottom: 0.2rem;
+}
+
+.customer-shell .appointments-table .home-quick-note-status-pill,
+.customer-shell .appointment-mobile-card .home-quick-note-status-pill {
+  margin-right: 0;
+  white-space: nowrap;
 }
 
 .mobile-offcanvas-backdrop {

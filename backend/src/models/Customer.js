@@ -14,12 +14,20 @@ const customerSchema = new mongoose.Schema({
     slotId: String,
     barberId: String,
     barberName: String,
+    barberSalonName: String,
+    barberCity: String,
+    barberDistrict: String,
     date: String,
     time: String,
     service: {
       name: String,
       price: Number,
       duration: Number
+    },
+    assignedMaster: {
+      masterId: String,
+      name: String,
+      username: String,
     },
     status: { type: String, default: 'pending' },
     createdAt: Date,
@@ -51,6 +59,7 @@ const customerSchema = new mongoose.Schema({
   favorites: [{
     barberId: String,
     barberName: String,
+    city: String,
     district: String,
     phone: String
   }]
