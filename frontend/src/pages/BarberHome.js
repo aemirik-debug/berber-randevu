@@ -981,6 +981,11 @@ function BarberHome() {
 
     if (action.kind === 'delete-slot') {
       await handleDeleteSlot(action.slot);
+      return;
+    }
+
+    if (action.kind === 'cancel-slot') {
+      await handleCancelSlotFromCalendar(action.slot, action.reasonValue || 'Takvimden kaldırıldı');
     }
   };
 
@@ -1070,6 +1075,28 @@ function BarberHome() {
       await loadSlotsForDate(slotDate);
     } catch (err) {
       setSlotsError(err.response?.data?.error || err.message || 'Saat silinemedi');
+    } finally {
+      setPendingSlotActionId('');
+    }
+  };
+
+  const handleCancelSlotFromCalendar = async (slot, reason = 'Takvimden kaldırıldı') => {
+    try {
+      setPendingSlotActionId(slot._id);
+      setSlotsError('');
+
+      await api.patch(`/slots/${slot._id}/cancel`, { reason });
+
+      await Promise.all([
+        loadSlotsForDate(slotDate),
+        loadDashboardSlotsForToday(),
+        loadDashboardPendingSlots(),
+        loadDashboardRevenueSlots(),
+      ]);
+
+      setActionMessage({ text: 'Randevu iptal edildi.', type: 'success' });
+    } catch (err) {
+      setSlotsError(err.response?.data?.error || 'Randevu iptal edilemedi');
     } finally {
       setPendingSlotActionId('');
     }
@@ -2264,6 +2291,9 @@ function BarberHome() {
                       const hideActions = s.isPastSlot && !s.isHistoricalRecord;
                       const canEditManual = Boolean(s.isManualAppointment);
                       const canDeleteManual = Boolean(s.isManualAppointment);
+                      const hasEditableAppointment = Boolean(hasAppointment) && ['booked', 'confirmed', 'reschedule_pending_customer', 'reschedule_pending_barber'].includes(statusLc);
+                      const canEditAppointment = canEditManual || (!s.isPastSlot && hasEditableAppointment);
+                      const canDeleteAppointment = canDeleteManual || hasEditableAppointment;
                       const canManageAvailability = !isVirtualSlot && !s.isPastSlot && ['available', 'blocked'].includes(statusLc);
                       const canCreateManual = !s.isPastSlot && statusLc === 'available';
 
@@ -2301,7 +2331,7 @@ function BarberHome() {
                             </div>
                           )}
                         </div>
-                        {!hideActions && isMasterUser && <div className="barber-slot-actions">
+                        {!hideActions && <div className="barber-slot-actions">
                           {isRecentlyDeletedSlot && (
                             <button
                               title="Silme işlemini geri al"
@@ -2312,7 +2342,7 @@ function BarberHome() {
                               ↩️
                             </button>
                           )}
-                          {canEditManual && (
+                          {canEditAppointment && (
                             <button title="Düzenle" className="barber-slot-action-btn" onClick={() => {
                               setSelectedSlotForEdit(s);
                               setShowEditSlot(true);
@@ -2357,14 +2387,28 @@ function BarberHome() {
                           >
                             🚫
                           </button>}
-                          {canDeleteManual && <button title="Sil" className="barber-slot-action-btn barber-slot-action-delete" onClick={() => {
+                          {canDeleteAppointment && <button title="Sil" className="barber-slot-action-btn barber-slot-action-delete" onClick={() => {
+                            if (canDeleteManual) {
+                              setConfirmAction({
+                                kind: 'delete-slot',
+                                slot: s,
+                                title: 'Randevu Silinsin mi?',
+                                message: 'Bu randevu müşteri tarafında silinmiş gibi görünecek ve takvimden kaldırılacak. Onaylıyor musunuz?',
+                                confirmText: 'Sil',
+                                variant: 'danger',
+                              });
+                              return;
+                            }
+
                             setConfirmAction({
-                              kind: 'delete-slot',
+                              kind: 'cancel-slot',
                               slot: s,
-                              title: 'Randevu Silinsin mi?',
-                              message: 'Bu randevu müşteri tarafında silinmiş gibi görünecek ve takvimden kaldırılacak. Onaylıyor musunuz?',
-                              confirmText: 'Sil',
+                              title: 'Randevu İptal Edilsin mi?',
+                              message: 'Bu onaylı randevu iptal edilerek takvimden düşürülecek. Onaylıyor musunuz?',
+                              confirmText: 'İptal Et',
                               variant: 'danger',
+                              showReason: true,
+                              reasonValue: 'İşletme tarafından iptal edildi',
                             });
                           }}>
                             🗑️

@@ -53,7 +53,7 @@ function buildSameAssignedMasterFilter(masterInfo) {
 
 function ensureMasterCanAccessSlot(req, slot) {
   if (!isMasterUser(req)) {
-    return false;
+    return true;
   }
   return String(slot?.assignedMaster?.masterId || '') === String(req.masterId || '');
 }
@@ -1625,7 +1625,7 @@ router.post('/:slotId/remind-barber', auth, async (req, res) => {
   }
 });
 
-// Manuel oluşturulan randevuyu düzenle
+// Randevuyu düzenle (manuel veya onay/beklemede olan dolu randevu)
 router.patch('/:slotId/edit', auth, checkFeature('calendarBooking'), async (req, res) => {
   try {
     const { customerName, customerPhone, serviceId, price, date, time } = req.body;
@@ -1636,9 +1636,15 @@ router.patch('/:slotId/edit', auth, checkFeature('calendarBooking'), async (req,
       return res.status(404).json({ success: false, error: 'Randevu bulunamadı' });
     }
 
-    // Sadece manuel oluşturulan randevular düzenlenebilir
-    if (!slot.isManualAppointment) {
-      return res.status(403).json({ success: false, error: 'Sadece manuel oluşturduğunuz randevuları düzenleyebilirsiniz' });
+    if (!ensureMasterCanAccessSlot(req, slot)) {
+      return res.status(403).json({ success: false, error: 'Bu randevu üzerinde yetkiniz yok' });
+    }
+
+    const slotStatus = String(slot.status || '').toLowerCase();
+    const editableStatuses = new Set(['booked', 'confirmed', 'reschedule_pending_customer', 'reschedule_pending_barber']);
+
+    if (!slot.isManualAppointment && !editableStatuses.has(slotStatus)) {
+      return res.status(403).json({ success: false, error: 'Bu randevu durumu düzenlemeye uygun değil' });
     }
 
     const targetDate = String(date || slot.date || '').trim();
@@ -1677,6 +1683,9 @@ router.patch('/:slotId/edit', auth, checkFeature('calendarBooking'), async (req,
 
     const normalizedPrice = resolveSlotPrice(service, price);
 
+    const oldDate = slot.date;
+    const oldTime = slot.time;
+
     // Slot bilgilerini güncelle
     slot.customer = slot.customer || {};
     slot.customer.name = customerName;
@@ -1693,6 +1702,35 @@ router.patch('/:slotId/edit', auth, checkFeature('calendarBooking'), async (req,
     };
     slot.updatedAt = new Date();
     await slot.save();
+
+    if (slot.customer?.customerId) {
+      const Customer = require('../models/Customer');
+      const updatePayload = {
+        $set: {
+          'appointments.$.date': targetDate,
+          'appointments.$.time': targetTime,
+          'appointments.$.status': toCustomerStatus(slot.status),
+          'appointments.$.service': {
+            name: service.name,
+            price: normalizedPrice,
+            duration: Number(service.duration || 30) || 30,
+          },
+          'appointments.$.updatedAt': new Date(),
+        }
+      };
+
+      const updateBySlotId = await Customer.updateOne(
+        { _id: slot.customer.customerId, 'appointments.slotId': String(slot._id) },
+        updatePayload
+      );
+
+      if (!updateBySlotId?.matchedCount) {
+        await Customer.updateOne(
+          { _id: slot.customer.customerId, 'appointments.date': oldDate, 'appointments.time': oldTime },
+          updatePayload
+        );
+      }
+    }
 
     // Güncellenmiş slot'u service bilgisiyle döndür
     const slotData = slot.toObject();
