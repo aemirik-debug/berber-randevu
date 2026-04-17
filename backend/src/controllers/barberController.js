@@ -126,7 +126,7 @@ function sanitizeBarberForClient(barberDoc) {
 
 exports.register = async (req, res) => {
   try {
-    const { barberType, salonName, fullName, phone, email, address, city, district, subscriptionPlan, password, services, features, workingHours } = req.body;
+    const { barberType, salonName, fullName, phone, email, address, city, district, facebookUrl, instagramUrl, subscriptionPlan, password, services, features, workingHours } = req.body;
     const normalizedEmail = String(email || '').trim().toLowerCase();
 
     if (!barberType || !salonName || !fullName || !phone || !address || !city || !district || !password) {
@@ -160,6 +160,8 @@ exports.register = async (req, res) => {
       address,
       city,
       district,
+      facebookUrl: String(facebookUrl || '').trim(),
+      instagramUrl: String(instagramUrl || '').trim(),
       password: hashedPassword,
       location: {
         type: 'Point',
@@ -414,6 +416,21 @@ exports.updateProfile = async (req, res) => {
     // Telefon değiştirilemez
     if (updates.phone) {
       delete updates.phone;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'address')) {
+      updates.address = String(updates.address || '').trim();
+      if (!updates.address) {
+        return res.status(400).json({ error: 'Açık adres zorunludur' });
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'facebookUrl')) {
+      updates.facebookUrl = String(updates.facebookUrl || '').trim();
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'instagramUrl')) {
+      updates.instagramUrl = String(updates.instagramUrl || '').trim();
     }
 
     const barber = await Barber.findById(barberId);

@@ -69,6 +69,38 @@ function toMasterDto(master) {
   };
 }
 
+function normalizeAssignedMaster(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || normalized === 'undefined' || normalized === 'null') {
+      return null;
+    }
+    return null;
+  }
+
+  if (typeof value !== 'object') {
+    return null;
+  }
+
+  const masterId = String(value.masterId || '').trim();
+  const name = String(value.name || '').trim();
+  const username = String(value.username || '').trim();
+
+  if (!masterId && !name && !username) {
+    return null;
+  }
+
+  return {
+    masterId,
+    name,
+    username,
+  };
+}
+
 function normalizePositivePrice(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -177,20 +209,59 @@ function hasOneHourPassedSinceSlot(dateStr, timeStr) {
 async function pushAppointmentToCustomer({ customerId, customerPhone, appointment }) {
   const Customer = require('../models/Customer');
 
+  const normalizePhoneDigits = (value) => String(value || '').replace(/\D/g, '');
+  const normalizedId = String(customerId || '').trim();
+  const normalizedPhone = String(customerPhone || '').trim();
+
   let customer = null;
-  if (customerId) {
-    customer = await Customer.findById(customerId);
+  if (normalizedId) {
+    try {
+      customer = await Customer.findById(normalizedId);
+    } catch (_) {
+      customer = null;
+    }
   }
 
-  if (!customer && customerPhone) {
-    customer = await Customer.findOne({ phone: customerPhone });
+  if (!customer && normalizedPhone) {
+    customer = await Customer.findOne({ phone: normalizedPhone });
+  }
+
+  if (!customer && normalizedPhone) {
+    const digits = normalizePhoneDigits(normalizedPhone);
+    if (digits) {
+      const phonePattern = digits.split('').join('\\D*');
+      customer = await Customer.findOne({ phone: { $regex: `${phonePattern}$` } });
+    }
   }
 
   if (!customer) {
     return false;
   }
 
-  customer.appointments.push(appointment);
+  // Legacy docs may contain invalid values like "undefined" for assignedMaster.
+  customer.appointments.forEach((item) => {
+    item.assignedMaster = normalizeAssignedMaster(item.assignedMaster);
+  });
+
+  const normalizedAppointment = {
+    ...appointment,
+    assignedMaster: normalizeAssignedMaster(appointment?.assignedMaster),
+  };
+
+  const targetSlotId = String(normalizedAppointment?.slotId || '').trim();
+  const existingIndex = customer.appointments.findIndex((item) => String(item?.slotId || '').trim() === targetSlotId);
+
+  if (existingIndex >= 0) {
+    const existingRaw = customer.appointments[existingIndex].toObject();
+    customer.appointments[existingIndex] = {
+      ...existingRaw,
+      ...normalizedAppointment,
+      assignedMaster: normalizeAssignedMaster(normalizedAppointment?.assignedMaster ?? existingRaw?.assignedMaster),
+    };
+  } else {
+    customer.appointments.push(normalizedAppointment);
+  }
+
   await customer.save();
   return true;
 }
@@ -216,7 +287,7 @@ function buildCustomerAppointment(slot, extra = {}) {
       duration: resolvedDuration
     },
     status: extra.status || 'Randevu Alındı',
-    assignedMaster: extra.assignedMaster || slot.assignedMaster || null,
+    assignedMaster: normalizeAssignedMaster(extra.assignedMaster ?? slot.assignedMaster),
     createdAt: extra.createdAt || new Date(),
     reminderSentAt: extra.reminderSentAt || null
   };
@@ -287,31 +358,91 @@ router.get('/available', async (req, res) => {
       });
     }
 
-    const baseQuery = {
-      barber: barberId,
-      date: date,
-      status: 'available'
-    };
+    const normalizedMasterScope = String(masterId || '').trim();
+    const isOwnerScope = !normalizedMasterScope || normalizedMasterScope === 'owner';
 
-    let slotsQuery = baseQuery;
-    if (String(masterId || '').trim()) {
-      slotsQuery = {
-        ...baseQuery,
-        $or: [
-          { 'assignedMaster.masterId': String(masterId).trim() },
-          { assignedMaster: { $exists: false } },
-          { assignedMaster: null },
-          { 'assignedMaster.masterId': { $in: ['', null] } },
-        ],
-      };
-    }
+    const slotsQuery = isOwnerScope
+      ? {
+          barber: barberId,
+          date: date,
+          $or: [
+            { assignedMaster: { $exists: false } },
+            { assignedMaster: null },
+            { 'assignedMaster.masterId': { $in: ['', null] } },
+          ],
+        }
+      : {
+          barber: barberId,
+          date: date,
+          'assignedMaster.masterId': normalizedMasterScope,
+        };
 
     const slots = await Slot.find(slotsQuery).sort({ time: 1 });
 
+    let slotsForResponse = slots;
+
+    const selectedMoment = moment(date, 'YYYY-MM-DD', true);
+    if (selectedMoment.isValid()) {
+      const dayName = selectedMoment.format('dddd').toLowerCase();
+      const dayConfig = barber?.workingHours?.[dayName];
+      const isOpen = dayConfig && (dayConfig.isOpen === true || String(dayConfig.isOpen).toLowerCase() === 'true');
+
+      if (isOpen) {
+        const openTime = moment(String(dayConfig.open || ''), 'HH:mm', true);
+        const closeTime = moment(String(dayConfig.close || ''), 'HH:mm', true);
+
+        if (openTime.isValid() && closeTime.isValid() && openTime.isBefore(closeTime)) {
+          const occupiedTimeSet = new Set(
+            slots
+              .filter((slot) => ['booked', 'confirmed', 'completed', 'reschedule_pending_customer', 'reschedule_pending_barber'].includes(String(slot.status || '').toLowerCase()))
+              .map((slot) => String(slot.time || '').slice(0, 5))
+          );
+
+          const actualAvailableSet = new Set(
+            slots
+              .filter((slot) => String(slot.status || '').toLowerCase() === 'available')
+              .map((slot) => String(slot.time || '').slice(0, 5))
+          );
+
+          const virtualSlots = [];
+          let cursor = openTime.clone();
+          while (cursor.isBefore(closeTime)) {
+            const timeStr = cursor.format('HH:mm');
+            if (!occupiedTimeSet.has(timeStr) && !actualAvailableSet.has(timeStr)) {
+              virtualSlots.push({
+                _id: `virtual-${date}-${timeStr}-${isOwnerScope ? 'owner' : normalizedMasterScope}`,
+                barber: barberId,
+                date: String(date),
+                time: timeStr,
+                status: 'available',
+                customer: null,
+                service: null,
+                manualPrice: null,
+                payment: { isPaid: false, amount: 0 },
+                assignedMaster: isOwnerScope ? null : { masterId: normalizedMasterScope },
+                isManualAppointment: false,
+                isHistoricalRecord: false,
+                isVirtualSlot: true,
+              });
+            }
+            cursor.add(30, 'minutes');
+          }
+
+          slotsForResponse = [...slots, ...virtualSlots].sort((a, b) => {
+            const dateCompare = String(a.date || '').localeCompare(String(b.date || ''));
+            if (dateCompare !== 0) {
+              return dateCompare;
+            }
+            return String(a.time || '').localeCompare(String(b.time || ''));
+          });
+        }
+      }
+    }
+
     res.json({
       success: true,
-      count: slots.length,
-      data: slots
+      count: slotsForResponse.length,
+      data: slotsForResponse
     });
     
   } catch (error) {
@@ -596,7 +727,8 @@ router.patch('/:slotId/reschedule/finalize', auth, checkFeature('calendarBooking
 
       slot.date = approval.proposedDate || slot.date;
       slot.time = approval.proposedTime || slot.time;
-      slot.status = fallbackStatus;
+      // Final onay sonrası randevu tekrar müşteri onay adımına dönmesin.
+      slot.status = 'confirmed';
       slot.rescheduleApproval = {
         ...approval,
         phase: 'completed',
@@ -1317,11 +1449,94 @@ router.patch('/:slotId/book', async (req, res) => {
   try {
     const { customerPhone, customerName, service, serviceId, customerId, price, assignedMasterId } = req.body;
     console.log('booking request body:', req.body);
-    
-    const slot = await Slot.findOne({
-      _id: req.params.slotId,
-      status: 'available'
-    }).populate('barber');
+
+    const requestedSlotId = String(req.params.slotId || '').trim();
+    const isVirtualSlotRequest = requestedSlotId.startsWith('virtual-');
+
+    let slot = null;
+
+    if (!isVirtualSlotRequest) {
+      slot = await Slot.findOne({
+        _id: requestedSlotId,
+        status: 'available'
+      }).populate('barber');
+    } else {
+      const virtualBarberId = String(req.body?.barberId || '').trim();
+      const virtualDate = String(req.body?.date || req.body?.slotDate || '').trim();
+      const virtualTime = String(req.body?.time || req.body?.slotTime || '').trim().slice(0, 5);
+
+      if (!virtualBarberId || !virtualDate || !virtualTime) {
+        return res.status(400).json({
+          success: false,
+          error: 'Sanal slot rezervasyonu için barberId, date ve time zorunludur'
+        });
+      }
+
+      const barber = await Barber.findById(virtualBarberId);
+      if (!barber) {
+        return res.status(404).json({ success: false, error: 'Berber bulunamadı' });
+      }
+
+      let resolvedAssignedMaster = null;
+      if (assignedMasterId) {
+        const targetMaster = (barber.masters || []).find((item) => String(item._id) === String(assignedMasterId));
+        if (!targetMaster) {
+          return res.status(400).json({ success: false, error: 'Seçilen usta bulunamadı' });
+        }
+        if (targetMaster.isActive === false) {
+          return res.status(400).json({ success: false, error: 'Seçilen usta pasif durumda' });
+        }
+        resolvedAssignedMaster = toMasterDto(targetMaster);
+      }
+
+      const scopedQuery = resolvedAssignedMaster
+        ? { 'assignedMaster.masterId': String(resolvedAssignedMaster.masterId) }
+        : {
+            $or: [
+              { assignedMaster: { $exists: false } },
+              { assignedMaster: null },
+              { 'assignedMaster.masterId': { $in: ['', null] } },
+            ],
+          };
+
+      slot = await Slot.findOne({
+        barber: virtualBarberId,
+        date: virtualDate,
+        time: virtualTime,
+        status: 'available',
+        ...scopedQuery,
+      }).populate('barber');
+
+      if (!slot) {
+        const conflictingSlot = await Slot.findOne({
+          barber: virtualBarberId,
+          date: virtualDate,
+          time: virtualTime,
+          ...scopedQuery,
+          status: { $ne: 'available' },
+        });
+
+        if (conflictingSlot) {
+          return res.status(409).json({ success: false, error: 'Seçilen saat artık müsait değil' });
+        }
+
+        const created = await Slot.create({
+          barber: virtualBarberId,
+          date: virtualDate,
+          time: virtualTime,
+          status: 'available',
+          customer: null,
+          service: null,
+          manualPrice: null,
+          payment: { isPaid: false, amount: 0 },
+          assignedMaster: resolvedAssignedMaster || undefined,
+          isManualAppointment: false,
+          isHistoricalRecord: false,
+        });
+
+        slot = await Slot.findById(created._id).populate('barber');
+      }
+    }
 
     if (!slot) {
       return res.status(404).json({ 
@@ -1344,6 +1559,11 @@ router.patch('/:slotId/book', async (req, res) => {
         error: 'Bu berber takvim randevusu almıyor' 
       });
     }
+
+    const originalAssignedMaster = slot.assignedMaster ? { ...slot.assignedMaster } : undefined;
+    const originalService = slot.service;
+    const originalManualPrice = slot.manualPrice ?? null;
+    const originalPayment = slot.payment ? { ...slot.payment } : { isPaid: false, amount: 0 };
 
     if (assignedMasterId) {
       const targetMaster = (slot.barber.masters || []).find((item) => String(item._id) === String(assignedMasterId));
@@ -1401,6 +1621,23 @@ router.patch('/:slotId/book', async (req, res) => {
     } catch (e) {
       pushSuccess = false;
       console.warn('Customer appointment push failed:', e.message);
+    }
+
+    if (!pushSuccess) {
+      slot.status = 'available';
+      slot.customer = undefined;
+      slot.cancelReason = '';
+      slot.assignedMaster = originalAssignedMaster;
+      slot.service = originalService;
+      slot.manualPrice = originalManualPrice;
+      slot.payment = originalPayment;
+      await slot.save();
+
+      return res.status(400).json({
+        success: false,
+        error: 'Randevu müşteri hesabına işlenemedi, lütfen tekrar deneyin.',
+        customerPush: false,
+      });
     }
     
     res.json({

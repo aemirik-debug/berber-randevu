@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
 import 'bootstrap/dist/css/bootstrap.min.css';
+import barberLogoSample from '../assets/barber-logo-sample.svg';
 
 function ShopSettings() {
   const [subscriptionPlan, setSubscriptionPlan] = useState('');
   const [calendarBooking, setCalendarBooking] = useState(false);
+  const [businessAddress, setBusinessAddress] = useState('');
+  const [facebookUrl, setFacebookUrl] = useState('');
+  const [instagramUrl, setInstagramUrl] = useState('');
+  const [logoUrl, setLogoUrl] = useState('');
   const [workingHours, setWorkingHours] = useState({
     monday: { isOpen: false, open: '09:00', close: '17:00' },
     tuesday: { isOpen: false, open: '09:00', close: '17:00' },
@@ -48,6 +53,10 @@ function ShopSettings() {
         const data = res.data;
         setSubscriptionPlan(data.subscription?.plan || 'basic');
         setCalendarBooking(data.features?.calendarBooking || false);
+        setBusinessAddress(data.address || '');
+        setFacebookUrl(data.facebookUrl || '');
+        setInstagramUrl(data.instagramUrl || '');
+        setLogoUrl(data.logoUrl || '');
         if (data.workingHours) setWorkingHours(data.workingHours);
       } catch (err) {
         showNotification('Ayarlar yüklenemedi', 'error');
@@ -67,12 +76,16 @@ function ShopSettings() {
     e.preventDefault();
     try {
       await api.patch('/barbers/profile', {
+        address: businessAddress,
+        facebookUrl,
+        instagramUrl,
+        logoUrl,
         features: { calendarBooking },
         workingHours
       }, {
         headers: { Authorization: `Bearer ${localStorage.getItem('barberToken')}` }
       });
-      showNotification('Dükkan ayarlarınız başarıyla güncellendi! ✅', 'success');
+      showNotification('Mağaza ayarlarınız başarıyla güncellendi! ✅', 'success');
     } catch (err) {
       showNotification(err.response?.data?.error || err.message, 'error');
     }
@@ -84,6 +97,28 @@ function ShopSettings() {
       return acc;
     }, {});
     setWorkingHours(updated);
+  };
+
+  const handleLogoUpload = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      showNotification('Lütfen geçerli bir görsel dosyası seçin', 'error');
+      event.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setLogoUrl(String(reader.result || ''));
+    };
+    reader.onerror = () => {
+      showNotification('Logo okunamadı', 'error');
+    };
+    reader.readAsDataURL(file);
   };
 
   return (
@@ -104,7 +139,7 @@ function ShopSettings() {
       {/* Page Header */}
       <div className="row mb-4">
         <div className="col-12">
-          <div className="d-flex align-items-center justify-content-between">
+          <div className="d-flex align-items-start justify-content-between gap-3">
             <div className="d-flex align-items-center">
               <div className="rounded-circle d-flex align-items-center justify-content-center me-3 shadow-sm" 
                    style={{width: '60px', height: '60px', backgroundColor: '#f39c12'}}>
@@ -115,11 +150,6 @@ function ShopSettings() {
                 <p className="text-muted mb-0">Çalışma saatleri ve hizmet ayarlarını yönetin</p>
               </div>
             </div>
-            <div className="text-end">
-              <span className="badge rounded-pill px-3 py-2 text-white" style={{backgroundColor: '#e74c3c'}}>
-                {subscriptionPlan?.toUpperCase()}
-              </span>
-            </div>
           </div>
         </div>
       </div>
@@ -127,6 +157,109 @@ function ShopSettings() {
       <div className="row">
         {/* Ana İçerik */}
         <div className="col-lg-8">
+          <div className="card border-0 shadow-sm rounded-4 mb-4">
+            <div className="card-header bg-white border-bottom py-3">
+              <h5 className="mb-0 fw-bold" style={{color: '#2c3e50'}}>
+                <span className="me-2">🏪</span>İşletme Bilgileri
+              </h5>
+            </div>
+            <div className="card-body p-4">
+              <div className="row g-3">
+                <div className="col-12">
+                  <div className="d-flex align-items-center gap-3 p-3 rounded-4 border" style={{background: 'linear-gradient(135deg, #f8fbff 0%, #ffffff 100%)'}}>
+                    <div className="flex-shrink-0">
+                      <div className="rounded-circle d-flex align-items-center justify-content-center shadow-sm overflow-hidden" style={{width: '72px', height: '72px', backgroundColor: '#f3f4f6'}}>
+                        <img
+                          src={logoUrl || barberLogoSample}
+                          alt="Salon logosu"
+                          style={{width: '100%', height: '100%', objectFit: 'cover'}}
+                          onError={(event) => {
+                            event.currentTarget.src = barberLogoSample;
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex-grow-1">
+                      <div className="d-flex align-items-center justify-content-between gap-3 flex-wrap">
+                        <div>
+                          <label className="form-label fw-semibold mb-1">Salon Logosu</label>
+                          <div className="text-muted small">Yüklerseniz müşteri ekranlarında ve rezervasyon akışında bu logo görünür. Yüklemezseniz varsayılan makas logosu kullanılır.</div>
+                        </div>
+                        <div className="d-flex gap-2 align-items-center">
+                          <input
+                            type="file"
+                            className="form-control form-control-sm"
+                            accept="image/*"
+                            onChange={handleLogoUpload}
+                            style={{maxWidth: '260px'}}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() => setLogoUrl('')}
+                          >
+                            Varsayılana Dön
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="col-12">
+                  <div className="d-flex align-items-center gap-3 p-3 rounded-4 border mb-2" style={{background: 'linear-gradient(135deg, #fffaf0 0%, #ffffff 100%)'}}>
+                    <div className="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" style={{width: '48px', height: '48px', backgroundColor: '#fff3cd'}}>
+                      <span className="fs-4">📍</span>
+                    </div>
+                    <div className="flex-grow-1">
+                      <label className="form-label fw-semibold mb-1">Açık Adres</label>
+                      <textarea
+                        className="form-control border-0 bg-light"
+                        rows={3}
+                        value={businessAddress}
+                        onChange={(e) => setBusinessAddress(e.target.value)}
+                        placeholder="Mahalle, cadde, sokak, bina no, kat, daire bilgilerini yazın"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="col-md-6">
+                  <div className="d-flex align-items-center gap-3 p-3 rounded-4 border h-100" style={{background: 'linear-gradient(135deg, #eef7ff 0%, #ffffff 100%)'}}>
+                    <div className="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" style={{width: '48px', height: '48px', backgroundColor: '#dbeafe'}}>
+                      <span className="fs-4">📘</span>
+                    </div>
+                    <div className="flex-grow-1">
+                      <label className="form-label fw-semibold mb-1">Facebook Adresi</label>
+                      <input
+                        type="url"
+                        className="form-control border-0 bg-light"
+                        value={facebookUrl}
+                        onChange={(e) => setFacebookUrl(e.target.value)}
+                        placeholder="https://facebook.com/..."
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="col-md-6">
+                  <div className="d-flex align-items-center gap-3 p-3 rounded-4 border h-100" style={{background: 'linear-gradient(135deg, #fff0f8 0%, #ffffff 100%)'}}>
+                    <div className="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" style={{width: '48px', height: '48px', backgroundColor: '#fce7f3'}}>
+                      <span className="fs-4">📷</span>
+                    </div>
+                    <div className="flex-grow-1">
+                      <label className="form-label fw-semibold mb-1">Instagram Adresi</label>
+                      <input
+                        type="url"
+                        className="form-control border-0 bg-light"
+                        value={instagramUrl}
+                        onChange={(e) => setInstagramUrl(e.target.value)}
+                        placeholder="https://instagram.com/..."
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="card border-0 shadow-sm rounded-4 mb-4">
             <div className="card-header bg-white border-bottom py-3">
               <div className="d-flex justify-content-between align-items-center">
@@ -277,31 +410,12 @@ function ShopSettings() {
 
         {/* Sağ Sidebar */}
         <div className="col-lg-4">
-          {/* Plan Bilgisi */}
-          <div className="card border-0 shadow-sm rounded-4 mb-4" style={{backgroundColor: '#fff3cd', borderLeft: '4px solid #f39c12'}}>
+          <div className="card border-0 shadow-sm rounded-4 mb-4" style={{backgroundColor: '#f8fbff', borderLeft: '4px solid #3498db'}}>
             <div className="card-body p-4">
-              <div className="text-center mb-3">
-                <span className="display-3">⭐</span>
-              </div>
-              <h6 className="fw-bold text-center mb-2" style={{color: '#2c3e50'}}>Abonelik Planı</h6>
-              <div className="text-center mb-3">
-                <span className="badge rounded-pill px-4 py-2 text-white" 
-                      style={{backgroundColor: subscriptionPlan === 'premium' ? '#f39c12' : '#95a5a6'}}>
-                  {subscriptionPlan === 'premium' ? '🎯 PREMIUM' : '📦 BASIC'}
-                </span>
-              </div>
-              <hr className="my-3" />
-              <div className="small text-muted text-center">
-                {subscriptionPlan === 'basic' && (
-                  <div>
-                    <p className="mb-2">Temel özellikleri kullanıyorsunuz.</p>
-                    <p className="text-dark fw-semibold">Takvimli randevu ve diğer özel özellikleri açmak için Premium plana yükseltin.</p>
-                  </div>
-                )}
-                {subscriptionPlan === 'premium' && (
-                  <p>Tüm özelliklere erişim sağlamaktasınız. 🎉</p>
-                )}
-              </div>
+              <h6 className="fw-bold mb-2" style={{color: '#2c3e50'}}>İşletme Vitrini</h6>
+              <p className="text-muted small mb-0">
+                Açık adres ve sosyal medya bağlantıları müşterilerin salonunuza daha hızlı ulaşmasını sağlar.
+              </p>
             </div>
           </div>
 

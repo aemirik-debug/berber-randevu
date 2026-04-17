@@ -12,7 +12,6 @@ function BarberProfile() {
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('');
   const [district, setDistrict] = useState('');
-  const [logoUrl, setLogoUrl] = useState('');
   const [subscriptionPlan, setSubscriptionPlan] = useState('');
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
@@ -21,7 +20,6 @@ function BarberProfile() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [isEmailLocked, setIsEmailLocked] = useState(false);
   
   // Profil bilgilerini backend'den çek
   useEffect(() => {
@@ -31,18 +29,15 @@ function BarberProfile() {
           headers: { Authorization: `Bearer ${localStorage.getItem('barberToken')}` }
         });
         const data = res.data;
-        const profileEmail = String(data.email || '').trim();
         setBarberType(data.barberType);
         setSalonName(data.salonName);
         setFullName(data.name);
         setPhone(data.phone);
-        setEmail(profileEmail);
+        setEmail(data.email);
         setAddress(data.address);
         setCity(data.city);
         setDistrict(data.district);
-        setLogoUrl(data.logoUrl || '');
         setSubscriptionPlan(data.subscription?.plan || 'basic');
-        setIsEmailLocked(!!profileEmail);
       } catch (err) {
         showNotification(err.response?.data?.error || err.message, 'error');
       }
@@ -60,22 +55,18 @@ function BarberProfile() {
   const handleUpdate = async (e) => {
     e.preventDefault();
     try {
-      const res = await api.patch('/barbers/profile', {
+      await api.patch('/barbers/profile', {
         barberType,
         salonName,
         name: fullName,
         phone,
-        email: email.trim(),
+        email,
         address,
         city,
-        district,
-        logoUrl
+        district
       }, {
         headers: { Authorization: `Bearer ${localStorage.getItem('barberToken')}` }
       });
-      const updatedEmail = String(res?.data?.data?.email || email || '').trim();
-      setEmail(updatedEmail);
-      setIsEmailLocked(!!updatedEmail);
       showNotification('Profil bilgileriniz başarıyla güncellendi! ✅', 'success');
     } catch (err) {
       showNotification(err.response?.data?.error || err.message, 'error');
@@ -191,24 +182,6 @@ function BarberProfile() {
                       </div>
                     </div>
 
-                    {/* Logo URL */}
-                    <div className="col-md-6">
-                      <label className="form-label fw-semibold small text-uppercase text-muted">Salon Logo URL</label>
-                      <div className="input-group">
-                        <span className="input-group-text bg-light border-end-0">
-                          <span style={{color: '#3498db'}}>🖼️</span>
-                        </span>
-                        <input
-                          type="url"
-                          className="form-control border-start-0 ps-0"
-                          placeholder="https://ornek-site.com/logo.png"
-                          value={logoUrl}
-                          onChange={(e) => setLogoUrl(e.target.value)}
-                        />
-                      </div>
-                      <small className="text-muted">Boş bırakılırsa müşteriye örnek logo gösterilir.</small>
-                    </div>
-
                     {/* Yetkili Adı */}
                     <div className="col-md-6">
                       <label className="form-label fw-semibold small text-uppercase text-muted">Yetkili Ad Soyad</label>
@@ -245,30 +218,24 @@ function BarberProfile() {
                       <small className="text-muted">Telefon numarası değiştirilemez</small>
                     </div>
 
-                    {/* Email - Boşsa bir kez girilebilir */}
+                    {/* Email - Değiştirilemez */}
                     <div className="col-md-6">
                       <label className="form-label fw-semibold small text-uppercase text-muted">E-Posta</label>
                       <div className="input-group">
                         <span className="input-group-text bg-light border-end-0">
-                          <span style={{color: isEmailLocked ? '#95a5a6' : '#3498db'}}>✉️</span>
+                          <span style={{color: '#95a5a6'}}>✉️</span>
                         </span>
                         <input 
                           type="email" 
-                          className={`form-control border-start-0 ps-0 ${isEmailLocked ? 'bg-light' : ''}`} 
+                          className="form-control border-start-0 ps-0 bg-light" 
                           value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          placeholder="ornek@email.com"
-                          disabled={isEmailLocked}
-                          style={{cursor: isEmailLocked ? 'not-allowed' : 'text'}}/>
+                          disabled
+                          style={{cursor: 'not-allowed'}}/>
                         <span className="input-group-text bg-light border-start-0">
-                          <i className={`bi ${isEmailLocked ? 'bi-lock-fill text-muted' : 'bi-pencil text-primary'}`}></i>
+                          <i className="bi bi-lock-fill text-muted"></i>
                         </span>
                       </div>
-                      <small className="text-muted">
-                        {isEmailLocked
-                          ? 'E-posta kaydedildiği için artık değiştirilemez.'
-                          : 'E-posta boş olduğu için kaydedene kadar düzenleyebilirsiniz.'}
-                      </small>
+                      <small className="text-muted">E-posta adresi değiştirilemez</small>
                     </div>
 
                     {/* Adres */}

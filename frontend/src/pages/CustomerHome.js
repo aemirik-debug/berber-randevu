@@ -7,6 +7,8 @@ import { connectSocket } from '../services/socket';
 import BookingPage from './BookingPage';
 import './CustomerHomeTheme.css';
 
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001';
+
 function CustomerHome() {
   const [activeSection, setActiveSection] = useState('home');
   const [sectionHistory, setSectionHistory] = useState([]);
@@ -52,6 +54,7 @@ function CustomerHome() {
   const [activeBarberSlideIndex, setActiveBarberSlideIndex] = useState(0);
   const [activePastSlideIndex, setActivePastSlideIndex] = useState(0);
   const [bookingPrefill, setBookingPrefill] = useState(null);
+  const [bookingResultModal, setBookingResultModal] = useState({ show: false, title: '', text: '', type: 'success' });
   const headerMenuRef = useRef(null);
   const barberScrollRef = useRef(null);
   const barberCardRefs = useRef([]);
@@ -263,6 +266,13 @@ function CustomerHome() {
     if (fallback) {
       return fallback;
     }
+    const ownerName = String(appointment?.barberName || '').trim();
+    if (ownerName) {
+      return ownerName;
+    }
+    if (appointment?.barberId) {
+      return 'İşletme Sahibi';
+    }
     return '';
   };
 
@@ -385,7 +395,7 @@ function CustomerHome() {
     try {
       setCancellingAppointmentId(appointment._id);
       const res = await axios.patch(
-        `http://localhost:5001/api/customers/appointments/${currentCustomerId}/${appointment._id}/cancel`,
+        `${API_BASE_URL}/api/customers/appointments/${currentCustomerId}/${appointment._id}/cancel`,
         {},
         { headers: getAuthHeaders() }
       );
@@ -416,7 +426,7 @@ function CustomerHome() {
     try {
       setSavingEditAppointmentId(appointment._id);
       const res = await axios.patch(
-        `http://localhost:5001/api/customers/appointments/${currentCustomerId}/${appointment._id}/reschedule`,
+        `${API_BASE_URL}/api/customers/appointments/${currentCustomerId}/${appointment._id}/reschedule`,
         { targetSlotId: selectedEditSlotId },
         { headers: getAuthHeaders() }
       );
@@ -478,7 +488,7 @@ function CustomerHome() {
     try {
       setRespondingRescheduleAppointmentId(appointment._id);
       const res = await axios.patch(
-        `http://localhost:5001/api/customers/appointments/${currentCustomerId}/${appointment._id}/reschedule-response`,
+        `${API_BASE_URL}/api/customers/appointments/${currentCustomerId}/${appointment._id}/reschedule-response`,
         { decision },
         { headers: getAuthHeaders() }
       );
@@ -565,6 +575,22 @@ useEffect(() => {
 }, [suggestedBarbers, selectedCity, selectedDistrict, openReviewBarberId]);
 
 // Randevuları çek
+const refreshAppointments = () => {
+  const customerInfo = getCustomerInfo();
+  if (!customerInfo?._id) {
+    setAppointments([]);
+    setLoadingAppointments(false);
+    return;
+  }
+
+  setLoadingAppointments(true);
+  axios
+    .get(`${API_BASE_URL}/api/customers/appointments/${customerInfo._id}`, { headers: getAuthHeaders() })
+    .then((res) => setAppointments(Array.isArray(res.data) ? res.data : []))
+    .catch((err) => console.error('Randevular yüklenemedi:', err))
+    .finally(() => setLoadingAppointments(false));
+};
+
 useEffect(() => {
   const customerInfo = getCustomerInfo();
   if (!customerInfo?._id) {
@@ -572,12 +598,7 @@ useEffect(() => {
     return;
   }
 
-  setLoadingAppointments(true);
-  axios
-    .get(`http://localhost:5001/api/customers/appointments/${customerInfo._id}`, { headers: getAuthHeaders() })
-    .then(res => setAppointments(res.data))
-    .catch(err => console.error("Randevular yüklenemedi:", err))
-    .finally(() => setLoadingAppointments(false));
+  refreshAppointments();
 
   // socket bağlan ve müşteri kimliğini bildir
   const sock = connectSocket();
@@ -1064,11 +1085,49 @@ const handleQuickBookFromFavorite = (favorite) => {
   );
 
   const parseAppointmentDateTime = (appointment) => {
-    if (!appointment?.date) {
+    const rawDate = String(appointment?.date || '').trim();
+    if (!rawDate) {
       return null;
     }
 
-    const parsed = new Date(`${appointment.date}T${appointment.time || '00:00'}`);
+    const rawTime = String(appointment?.time || '00:00').trim();
+    const timeMatch = rawTime.match(/(\d{1,2}):(\d{2})/);
+    const normalizedTime = timeMatch
+      ? `${String(timeMatch[1]).padStart(2, '0')}:${timeMatch[2]}`
+      : '00:00';
+
+    // Remove ISO time part if present.
+    const datePart = rawDate.includes('T') ? rawDate.split('T')[0] : rawDate;
+
+    let year = 0;
+    let month = 0;
+    let day = 0;
+
+    // YYYY-MM-DD or YYYY/MM/DD
+    let match = datePart.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+    if (match) {
+      year = Number(match[1]);
+      month = Number(match[2]);
+      day = Number(match[3]);
+    } else {
+      // DD-MM-YYYY, DD/MM/YYYY, DD.MM.YYYY
+      match = datePart.match(/^(\d{2})[./-](\d{2})[./-](\d{4})$/);
+      if (match) {
+        day = Number(match[1]);
+        month = Number(match[2]);
+        year = Number(match[3]);
+      }
+    }
+
+    if (!year || !month || !day) {
+      return null;
+    }
+
+    const [hourText, minuteText] = normalizedTime.split(':');
+    const hour = Number(hourText);
+    const minute = Number(minuteText);
+
+    const parsed = new Date(year, month - 1, day, hour, minute, 0, 0);
     if (Number.isNaN(parsed.getTime())) {
       return null;
     }
@@ -1098,6 +1157,15 @@ const handleQuickBookFromFavorite = (favorite) => {
     return appointmentDate ? appointmentDate.getTime() : 0;
   };
 
+  const hasAppointmentPassedOneHour = (appointment) => {
+    const appointmentDate = parseAppointmentDateTime(appointment);
+    if (!appointmentDate) {
+      return false;
+    }
+
+    return Date.now() - appointmentDate.getTime() >= 60 * 60 * 1000;
+  };
+
   const activeAppointments = useMemo(
     () => sortedAppointments.filter((app) => {
       const appointmentDate = parseAppointmentDateTime(app);
@@ -1110,9 +1178,30 @@ const handleQuickBookFromFavorite = (favorite) => {
         return false;
       }
 
-      return appointmentDate.getTime() >= Date.now();
+      return !hasAppointmentPassedOneHour(app);
     }),
     [sortedAppointments]
+  );
+
+  const alertAppointments = useMemo(
+    () => appointmentsNewestFirst.filter((app) => {
+      const statusLc = String(app.status || '').toLowerCase();
+      if (statusLc === 'cancelled' || statusLc === 'reddedildi') {
+        return false;
+      }
+
+      const reschedulePhase = String(app?.rescheduleApproval?.phase || '').toLowerCase();
+      const isPendingLike = [
+        'pending',
+        'booked',
+        'randevu alındı',
+        'saat değişikliği müşteri onayı bekleniyor',
+        'saat değişikliği berber onayı bekleniyor',
+      ].includes(statusLc);
+
+      return isPendingLike || reschedulePhase === 'awaiting_customer' || reschedulePhase === 'awaiting_barber';
+    }),
+    [appointmentsNewestFirst]
   );
 
   const pendingActiveAppointments = useMemo(
@@ -1124,8 +1213,8 @@ const handleQuickBookFromFavorite = (favorite) => {
   );
 
   const highlightedAppointment = useMemo(
-    () => pendingActiveAppointments[0] || activeAppointments[0] || null,
-    [pendingActiveAppointments, activeAppointments]
+    () => pendingActiveAppointments[0] || alertAppointments[0] || activeAppointments[0] || null,
+    [pendingActiveAppointments, alertAppointments, activeAppointments]
   );
 
   const resolveAppointmentBarberMeta = (appointment) => {
@@ -1174,8 +1263,16 @@ const handleQuickBookFromFavorite = (favorite) => {
 
   const quickNoteStatus = useMemo(() => {
     const listItems = [...activeAppointments]
-      .sort((a, b) => getAppointmentCreatedTime(b) - getAppointmentCreatedTime(a))
-      .slice(0, 6)
+      .sort((a, b) => {
+        const aDate = parseAppointmentDateTime(a);
+        const bDate = parseAppointmentDateTime(b);
+        const aStamp = aDate ? aDate.getTime() : 0;
+        const bStamp = bDate ? bDate.getTime() : 0;
+        if (aStamp !== bStamp) {
+          return bStamp - aStamp;
+        }
+        return getAppointmentCreatedTime(b) - getAppointmentCreatedTime(a);
+      })
       .map((appointment) => {
         const statusMeta = getQuickStatusMeta(appointment.status, appointment);
         const barberMeta = resolveAppointmentBarberMeta(appointment);
@@ -1214,7 +1311,10 @@ const handleQuickBookFromFavorite = (favorite) => {
     const labelTime = highlightedAppointment.time || '--:--';
     const barberLabel = highlightedAppointment.barberName || 'Berber';
     const statusLc = String(highlightedAppointment.status || '').toLowerCase();
-    const pendingCount = pendingActiveAppointments.length;
+    const pendingCount = pendingActiveAppointments.length || alertAppointments.filter((appointment) => {
+      const statusLc = String(appointment.status || '').toLowerCase();
+      return statusLc === 'pending' || statusLc === 'booked' || statusLc === 'randevu alındı';
+    }).length;
 
     if (statusLc === 'cancelled' || statusLc === 'reddedildi') {
       return {
@@ -1245,7 +1345,129 @@ const handleQuickBookFromFavorite = (favorite) => {
       label: pendingCount > 1 ? `${pendingCount} Onay Bekleniyor` : 'Onay Bekleniyor',
       items: listItems,
     };
-  }, [highlightedAppointment, pendingActiveAppointments, activeAppointments, suggestedBarbers, favorites]);
+  }, [highlightedAppointment, pendingActiveAppointments, alertAppointments, activeAppointments, suggestedBarbers, favorites]);
+
+  const getCustomerAlertFlowMeta = (appointment) => {
+    const statusLc = String(appointment?.status || '').toLowerCase();
+    const phase = String(appointment?.rescheduleApproval?.phase || '').toLowerCase();
+
+    if (phase === 'awaiting_customer' || statusLc === 'saat değişikliği müşteri onayı bekleniyor') {
+      const proposedDate = appointment?.rescheduleApproval?.proposedDate || appointment?.date || '-';
+      const proposedTime = appointment?.rescheduleApproval?.proposedTime || appointment?.time || '--:--';
+      return {
+        title: 'Yeni saat önerisi geldi',
+        text: `Berber yeni saat önerdi: ${proposedDate} ${proposedTime}`,
+        action: 'respond',
+      };
+    }
+
+    if (phase === 'awaiting_barber' || statusLc === 'saat değişikliği berber onayı bekleniyor') {
+      return {
+        title: 'Kabulün berbere iletildi',
+        text: 'Müşteri onayı tamamlandı, berberin son onayı bekleniyor.',
+        action: 'none',
+      };
+    }
+
+    if (statusLc === 'confirmed') {
+      return {
+        title: 'Randevu onaylandı',
+        text: 'Berber randevunu onayladı, işlem tamam.',
+        action: 'none',
+      };
+    }
+
+    return {
+      title: 'Randevu berbere iletildi',
+      text: 'Berberin kontrol ve onayı bekleniyor.',
+      action: 'none',
+    };
+  };
+
+  const customerAlertItems = useMemo(
+    () => alertAppointments
+      .slice(0, 6)
+      .map((appointment) => {
+        const statusMeta = getQuickStatusMeta(appointment.status, appointment);
+        const barberMeta = resolveAppointmentBarberMeta(appointment);
+        const flowMeta = getCustomerAlertFlowMeta(appointment);
+        return {
+          id: appointment._id,
+          statusLabel: statusMeta.label,
+          statusTone: statusMeta.tone,
+          statusIcon: statusMeta.icon,
+          barberName: barberMeta.displayName,
+          dateLabel: new Date(appointment.date).toLocaleDateString(),
+          timeLabel: appointment.time || '--:--',
+          locationLabel: barberMeta.locationLabel,
+          canRespondReschedule: canRespondToRescheduleProposal(appointment),
+          flowTitle: flowMeta.title,
+          flowText: flowMeta.text,
+          flowAction: flowMeta.action,
+          appointment,
+        };
+      }),
+    [alertAppointments, favorites, suggestedBarbers]
+  );
+
+  const actionableAlertCount = customerAlertItems.length;
+
+  const renderCustomerAlertsPanel = (wrapperClassName = 'mt-3') => (
+    <div className={`card border-0 shadow-sm ${wrapperClassName}`.trim()}>
+      <div className="card-header d-flex justify-content-between align-items-center">
+        <div className="fw-semibold">Uyarılar</div>
+        <div className="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+          <span className="badge rounded-pill text-bg-light">Toplam: {appointmentsNewestFirst.length}</span>
+          <span className={`badge rounded-pill ${actionableAlertCount > 0 ? 'text-bg-warning' : 'text-bg-light'}`}>
+            Aktif: {actionableAlertCount}
+          </span>
+        </div>
+      </div>
+      <div className="card-body">
+        {customerAlertItems.length > 0 ? (
+          <div className="d-grid gap-2">
+            {customerAlertItems.map((item) => (
+              <div key={item.id} className="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 border rounded-3 p-2">
+                <div>
+                  <div className="fw-semibold">{item.barberName}</div>
+                  <div className="small text-muted">{item.dateLabel} · {item.timeLabel} · {item.locationLabel}</div>
+                  <div className="small mt-1"><strong>{item.flowTitle}</strong> - {item.flowText}</div>
+                </div>
+                <div className="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                  <span className={`home-quick-note-status-pill home-quick-note-status-pill-${item.statusTone}`}>
+                    <span>{item.statusIcon}</span>
+                    <span>{item.statusLabel}</span>
+                  </span>
+                  {item.flowAction === 'respond' && item.canRespondReschedule && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-success"
+                        disabled={respondingRescheduleAppointmentId === item.id}
+                        onClick={() => handleRespondToRescheduleProposal(item.appointment, 'accept')}
+                      >
+                        Kabul Et
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-danger"
+                        disabled={respondingRescheduleAppointmentId === item.id}
+                        onClick={() => handleRespondToRescheduleProposal(item.appointment, 'reject')}
+                      >
+                        Reddet
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-muted small">Şu anda işlem bekleyen uyarı yok.</div>
+        )}
+      </div>
+    </div>
+  );
 
   const pastAppointments = useMemo(
     () => [...sortedAppointments]
@@ -1255,13 +1477,21 @@ const handleQuickBookFromFavorite = (favorite) => {
           return true;
         }
 
-        const appointmentDate = parseAppointmentDateTime(app);
-        return appointmentDate ? appointmentDate.getTime() < Date.now() : false;
+        return hasAppointmentPassedOneHour(app);
       })
       .sort((a, b) => {
+        const bDate = parseAppointmentDateTime(b);
+        const aDate = parseAppointmentDateTime(a);
+        const bStamp = bDate ? bDate.getTime() : 0;
+        const aStamp = aDate ? aDate.getTime() : 0;
+
+        if (bStamp !== aStamp) {
+          return bStamp - aStamp;
+        }
+
         return getAppointmentCreatedTime(b) - getAppointmentCreatedTime(a);
       })
-      .slice(0, 6),
+      .slice(0, 30),
     [sortedAppointments]
   );
 
@@ -1586,47 +1816,49 @@ const handleQuickBookFromFavorite = (favorite) => {
         ))}
       </div>
 
+      {renderCustomerAlertsPanel('mt-3')}
+
       <div className="home-quick-note mt-3">
         <div className="home-quick-note-title">Hızlı bakış</div>
         {quickNoteStatus.items.length > 0 ? (
           <div className="home-quick-note-list mt-2">
             {quickNoteStatus.items.map((item) => (
-              <div key={item.id} className="home-quick-note-item">
-                <div className="home-quick-note-item-head">
-                  <div>
-                    <div className="fw-semibold">{item.barberName}</div>
-                    {item.masterName && <div className="small text-muted">Usta: {item.masterName}</div>}
-                    <div className="small text-muted">{item.dateLabel} · {item.timeLabel}</div>
-                    <div className="small text-muted">Konum: {item.locationLabel}</div>
+              <div key={item.id} className="home-quick-note-item p-3 border-0 rounded-3 shadow-sm" style={{ backgroundColor: '#f9fafb' }}>
+                <div className="d-flex justify-content-between align-items-start gap-3 mb-3">
+                  <div className="flex-grow-1">
+                    <div className="fw-bold mb-2" style={{ fontSize: '1.15em', color: '#1a202c' }}>
+                      🏢 {item.barberName}
+                    </div>
+                    {item.masterName && (
+                      <div className="small mb-2" style={{ color: '#4b5563' }}>
+                        <span style={{ marginRight: '6px' }}>👨‍💼</span>
+                        <strong>Ustanız:</strong> {item.masterName}
+                      </div>
+                    )}
+                    <div className="d-flex align-items-center gap-3 flex-wrap small text-muted mb-2">
+                      <span>
+                        <span style={{ marginRight: '4px' }}>📅</span>
+                        <strong>{item.dateLabel}</strong>
+                      </span>
+                      <span>
+                        <span style={{ marginRight: '4px' }}>🕐</span>
+                        <strong>{item.timeLabel}</strong>
+                      </span>
+                    </div>
+                    <div className="small" style={{ color: '#6b7280' }}>
+                      <span style={{ marginRight: '4px' }}>📍</span>
+                      {item.locationLabel}
+                    </div>
                   </div>
-                  <div className="home-quick-note-right">
-                    <span className={`home-quick-note-status-pill home-quick-note-status-pill-${item.statusTone}`}>
+                  <div className="d-flex flex-column align-items-end gap-2">
+                    <span className={`home-quick-note-status-pill home-quick-note-status-pill-${item.statusTone}`} style={{ whiteSpace: 'nowrap' }}>
                       <span>{item.statusIcon}</span>
                       <span>{item.statusLabel}</span>
                     </span>
-                    {item.canEdit && (
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-secondary"
-                        onClick={() => handleStartEditAppointment(activeAppointments.find((appointment) => appointment._id === item.id))}
-                      >
-                        Düzenle
-                      </button>
-                    )}
-                    {item.canCancel && (
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-danger"
-                        disabled={cancellingAppointmentId === item.id}
-                        onClick={() => handleCancelAppointment(activeAppointments.find((appointment) => appointment._id === item.id))}
-                      >
-                        {cancellingAppointmentId === item.id ? 'İptal...' : 'İptal'}
-                      </button>
-                    )}
                   </div>
                 </div>
 
-                <div className="home-quick-note-actions mt-2">
+                <div className="home-quick-note-actions mt-2 pt-3 border-top d-flex gap-2 flex-wrap">
                   {item.canRemind ? (
                     <button
                       type="button"
@@ -2084,10 +2316,27 @@ const handleQuickBookFromFavorite = (favorite) => {
               embedded
               initialSelection={bookingPrefill}
               onBack={() => goToSection('home', false)}
-              onSuccess={() => {
+              onSuccess={(payload) => {
+                const nextText = String(payload?.text || '').trim();
+                const nextType = String(payload?.type || '').trim() || 'success';
+                if (nextText) {
+                  if (nextType === 'success') {
+                    setAlertMessage('');
+                    setAlertType('');
+                    setBookingResultModal({
+                      show: true,
+                      title: 'Randevu Oluşturuldu',
+                      text: nextText,
+                      type: 'success',
+                    });
+                  } else {
+                    setAlertMessage(nextText);
+                    setAlertType(nextType);
+                  }
+                }
+                refreshAppointments();
                 setBookingPrefill(null);
                 goToSection('home', false);
-                window.location.reload();
               }}
             />
           </div>
@@ -2632,6 +2881,42 @@ const handleQuickBookFromFavorite = (favorite) => {
             {footerContent}
           </div>
         </div>
+
+        {bookingResultModal.show && (
+          <div
+            className="modal d-block"
+            tabIndex="-1"
+            role="dialog"
+            aria-modal="true"
+            onClick={() => setBookingResultModal({ show: false, title: '', text: '', type: 'success' })}
+          >
+            <div className="modal-dialog modal-dialog-centered" role="document" onClick={(event) => event.stopPropagation()}>
+              <div className="modal-content border-0 shadow">
+                <div className="modal-header">
+                  <h5 className="modal-title">{bookingResultModal.title || 'Bilgilendirme'}</h5>
+                  <button
+                    type="button"
+                    className="btn-close"
+                    aria-label="Kapat"
+                    onClick={() => setBookingResultModal({ show: false, title: '', text: '', type: 'success' })}
+                  />
+                </div>
+                <div className="modal-body">
+                  <p className="mb-0">{bookingResultModal.text}</p>
+                </div>
+                <div className="modal-footer">
+                  <button
+                    type="button"
+                    className={`btn btn-${bookingResultModal.type === 'danger' ? 'danger' : 'primary'}`}
+                    onClick={() => setBookingResultModal({ show: false, title: '', text: '', type: 'success' })}
+                  >
+                    Tamam
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

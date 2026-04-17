@@ -9,6 +9,8 @@ const BarberSchema = new mongoose.Schema({
   address: { type: String, required: true },
   city: { type: String, required: true },
   district: { type: String, required: true },
+  facebookUrl: { type: String, default: '' },
+  instagramUrl: { type: String, default: '' },
   logoUrl: { type: String, default: '' },
   password: { type: String, required: true },
   location: {

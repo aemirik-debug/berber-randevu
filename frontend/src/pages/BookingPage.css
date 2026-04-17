@@ -168,6 +168,10 @@ button.booking-step:disabled {
   position: relative;
 }
 
+.booking-master-menu {
+  --service-accent: #4A7C59;
+}
+
 .booking-service-trigger {
   width: 100%;
   min-height: 3rem;
@@ -300,6 +304,7 @@ button.booking-step:disabled {
   align-items: center;
   font-size: 0.82rem;
 }
+
 
 .booking-service-summary span,
 .booking-comparison-mini span {

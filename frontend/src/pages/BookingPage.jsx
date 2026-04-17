@@ -13,6 +13,7 @@ const toLocalDateInput = (date) => {
 };
 
 const WEEK_DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const OWNER_SCOPE_VALUE = '__owner__';
 
 const parseClockToMinutes = (clockValue) => {
   const [rawHour, rawMinute] = String(clockValue || '').split(':');
@@ -39,15 +40,17 @@ function BookingPage({ embedded = false, onBack, onSuccess, initialSelection = n
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [selectedService, setSelectedService] = useState(null);
-  const [selectedMasterId, setSelectedMasterId] = useState('');
+  const [selectedMasterId, setSelectedMasterId] = useState(OWNER_SCOPE_VALUE);
   const [serviceDropdownOpen, setServiceDropdownOpen] = useState(false);
+  const [masterDropdownOpen, setMasterDropdownOpen] = useState(false);
   const [availableSlots, setAvailableSlots] = useState([]);
-  const [showPayment, setShowPayment] = useState(false);
-  const [paymentStatus, setPaymentStatus] = useState(null);
+  const [isSubmittingBooking, setIsSubmittingBooking] = useState(false);
+  const [bookingAlert, setBookingAlert] = useState({ type: '', text: '' });
   const [isMobile, setIsMobile] = useState(false);
   const [mobileStep, setMobileStep] = useState(1);
   const [nowTick, setNowTick] = useState(Date.now());
   const appliedPrefillRef = useRef('');
+  const masterDropdownRef = useRef(null);
 
   const navigate = useNavigate();
   const today = useMemo(() => toLocalDateInput(new Date(nowTick)), [nowTick]);
@@ -91,6 +94,17 @@ useEffect(() => {
   updateMobile();
   mediaQuery.addEventListener('change', updateMobile);
   return () => mediaQuery.removeEventListener('change', updateMobile);
+}, []);
+
+useEffect(() => {
+  const handleClickOutside = (event) => {
+    if (!masterDropdownRef.current?.contains(event.target)) {
+      setMasterDropdownOpen(false);
+    }
+  };
+
+  document.addEventListener('mousedown', handleClickOutside);
+  return () => document.removeEventListener('mousedown', handleClickOutside);
 }, []);
 
 const loadDistricts = async (city) => {
@@ -148,7 +162,7 @@ useEffect(() => {
     setCity(prefillCity);
     setDistrict(prefillDistrict);
     setSelectedService(null);
-    setSelectedMasterId('');
+    setSelectedMasterId(OWNER_SCOPE_VALUE);
     setSelectedDate('');
     setSelectedSlot(null);
     setAvailableSlots([]);
@@ -185,37 +199,53 @@ useEffect(() => {
       return;
     }
   }, [isMobile, city, district, selectedBarber, selectedService, selectedDate, selectedSlot]);
-  const processPayment = async () => {
-    setPaymentStatus('processing');
-    setTimeout(async () => {
-      try {
-        const customerInfo = JSON.parse(localStorage.getItem('customerInfo'));
-        // Slot rezervasyonu - bu zaten customer appointment'ını ekliyor
-        await api.patch(`/slots/${selectedSlot._id}/book`, {
-          customerId: customerInfo._id,
-          customerPhone: customerInfo.phone,
-          customerName: `${customerInfo.name || ''} ${customerInfo.surname || ''}`.trim(),
-          serviceId: selectedService?._id,
-          service: selectedService?.name,
-          price: selectedPrice,
-          assignedMasterId: selectedMasterId || undefined,
-        });
+  const handleCompleteBooking = async () => {
+    if (!selectedSlot || !selectedService) {
+      return;
+    }
 
-        setPaymentStatus('success');
-        setTimeout(() => {
-          setShowPayment(false);
-          setPaymentStatus(null);
-          if (typeof onSuccess === 'function') {
-            onSuccess();
-          } else {
-            navigate('/customer/home');
-          }
-        }, 2000);
-      } catch (err) {
-        console.error('Ödeme/randevu hatası', err);
-        setPaymentStatus('error');
+    try {
+      setIsSubmittingBooking(true);
+      setBookingAlert({ type: '', text: '' });
+      const customerInfo = JSON.parse(localStorage.getItem('customerInfo'));
+      const resolvedCustomerId = String(customerInfo?._id || customerInfo?.id || '').trim();
+      const resolvedCustomerPhone = String(customerInfo?.phone || '').trim();
+
+      await api.patch(`/slots/${selectedSlot._id}/book`, {
+        customerId: resolvedCustomerId || undefined,
+        customerPhone: resolvedCustomerPhone || undefined,
+        customerName: `${customerInfo?.name || ''} ${customerInfo?.surname || ''}`.trim(),
+        barberId: selectedBarber?._id,
+        date: selectedDate,
+        time: selectedSlot?.time,
+        serviceId: selectedService?._id,
+        service: selectedService?.name,
+        price: selectedPrice,
+        assignedMasterId: selectedMasterId === OWNER_SCOPE_VALUE ? undefined : selectedMasterId,
+      });
+
+      setBookingAlert({
+        type: 'success',
+        text: 'Randevunuz oluşturuldu. Berberin onayından sonra randevunuz tamamlanacaktır.'
+      });
+
+      if (typeof onSuccess === 'function') {
+        onSuccess({
+          type: 'success',
+          text: 'Randevunuz oluşturuldu. Berberin onayından sonra randevunuz tamamlanacaktır.'
+        });
+      } else {
+        navigate('/customer/home');
       }
-    }, 3000);
+    } catch (err) {
+      console.error('Randevu oluşturma hatası', err);
+      setBookingAlert({
+        type: 'danger',
+        text: err.response?.data?.error || 'Randevu oluşturulamadı. Lütfen tekrar deneyin.'
+      });
+    } finally {
+      setIsSubmittingBooking(false);
+    }
   };
 
   const selectedPrice = Number(selectedService?.price || 0);
@@ -225,12 +255,13 @@ useEffect(() => {
     }
     return (availableSlots || []).map((slot) => ({
       ...slot,
+      isBookable: String(slot?.status || '').toLowerCase() === 'available',
       isPastSlot: isPastSlotForToday(selectedDate, slot.time),
     }));
   }, [availableSlots, selectedDate, isPastSlotForToday]);
 
   const selectableSlots = useMemo(
-    () => visibleAvailableSlots.filter((slot) => !slot.isPastSlot),
+    () => visibleAvailableSlots.filter((slot) => slot.isBookable && !slot.isPastSlot),
     [visibleAvailableSlots]
   );
 
@@ -240,10 +271,20 @@ useEffect(() => {
     () => (selectedBarber?.masters || []).filter((master) => master && master.isActive !== false),
     [selectedBarber]
   );
+  const ownerMasterName = useMemo(() => {
+    const ownerName = String(selectedBarber?.name || '').trim();
+    if (ownerName) {
+      return ownerName;
+    }
+
+    const salonName = String(selectedBarber?.salonName || '').trim();
+    return salonName || 'İşletme Sahibi';
+  }, [selectedBarber]);
   const selectedMaster = useMemo(
     () => activeMasters.find((master) => String(master._id) === String(selectedMasterId)) || null,
     [activeMasters, selectedMasterId]
   );
+  const selectedMasterLabel = selectedMaster?.name || `${ownerMasterName} (İşletme Sahibi)`;
 
   const isBarberOpenOnDate = useCallback((barber, dateValue) => {
     if (!barber) {
@@ -354,7 +395,7 @@ useEffect(() => {
           params: {
             barberId: selectedBarber._id,
             date: dateValue,
-            masterId: selectedMasterId || undefined,
+            masterId: selectedMasterId === OWNER_SCOPE_VALUE ? 'owner' : selectedMasterId,
           }
         });
         const incomingSlots = Array.isArray(res.data.data) ? res.data.data : [];
@@ -378,6 +419,10 @@ useEffect(() => {
 
     handleDateSelect(selectedDate);
   }, [selectedMasterId]);
+
+  useEffect(() => {
+    setMasterDropdownOpen(false);
+  }, [selectedBarber]);
 
   const currentStep = (() => {
     if (!city || !district) return 1;
@@ -422,6 +467,13 @@ useEffect(() => {
 
   return (
     <div className={`${embedded ? 'booking-inline-panel position-relative' : 'container mt-4 position-relative'} booking-page-shell`}>
+      {bookingAlert.text && (
+        <div className={`alert alert-${bookingAlert.type || 'info'} alert-dismissible fade show`} role="alert">
+          {bookingAlert.text}
+          <button type="button" className="btn-close" onClick={() => setBookingAlert({ type: '', text: '' })}></button>
+        </div>
+      )}
+
       <div className="booking-header mb-3">
         <h2 className="mb-1">💈 Randevu Oluştur</h2>
         <p className="booking-header-sub mb-0">2 dakikada randevunu planla, tüm adımları tek akışta tamamla.</p>
@@ -468,7 +520,7 @@ useEffect(() => {
     setBarbers([]);
     setBarbersFetched(false);
     setSelectedBarber(null);
-    setSelectedMasterId('');
+    setSelectedMasterId(OWNER_SCOPE_VALUE);
     loadDistricts(e.target.value);
   }}>
   <option value="">İl seçin...</option>
@@ -486,7 +538,7 @@ useEffect(() => {
     setBarbers([]);
     setBarbersFetched(false);
     setSelectedBarber(null);
-    setSelectedMasterId('');
+    setSelectedMasterId(OWNER_SCOPE_VALUE);
   }}>
     <option value="">İlçe seçin...</option>
     {districts.map(d => <option key={d} value={d}>{d}</option>)}
@@ -527,7 +579,7 @@ useEffect(() => {
               onClick={() => {
                 setSelectedBarber(barber);
                 setSelectedService(null);
-                setSelectedMasterId('');
+                setSelectedMasterId(OWNER_SCOPE_VALUE);
                 setServiceDropdownOpen(false);
                 setSelectedDate('');
                 setSelectedSlot(null);
@@ -639,23 +691,65 @@ useEffect(() => {
             )}
           </div>
 
-          <div className="mb-3">
-            <label className="form-label">Usta Seçin</label>
-            {activeMasters.length > 0 ? (
-              <select
-                className="form-select"
-                value={selectedMasterId}
-                onChange={(e) => setSelectedMasterId(e.target.value)}
+          <div className="booking-service-picker mb-3">
+            <label className="form-label mb-2">İşletme / Usta Seçin</label>
+            <div className="booking-service-dropdown" ref={masterDropdownRef}>
+              <button
+                type="button"
+                className={`booking-service-trigger ${masterDropdownOpen ? 'open' : ''}`}
+                onClick={() => setMasterDropdownOpen((value) => !value)}
               >
-                <option value="">Farketmez (salon belirlesin)</option>
-                {activeMasters.map((master) => (
-                  <option key={master._id} value={master._id}>
-                    {master.name}{master.specialty ? ` - ${master.specialty}` : ''}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <div className="booking-info-note">Bu salon için aktif usta tanımlı değil.</div>
+                <span className="booking-service-trigger-icon">🧑‍🔧</span>
+                <span className="booking-service-trigger-text">
+                  {selectedMaster?.name || `${ownerMasterName} (İşletme Sahibi)`}
+                </span>
+                <span className="booking-service-trigger-chevron">▾</span>
+              </button>
+
+              {masterDropdownOpen && (
+                <div className="booking-service-menu booking-master-menu">
+                  <button
+                    type="button"
+                    className={`booking-service-option ${selectedMasterId === OWNER_SCOPE_VALUE ? 'active' : ''}`}
+                    onClick={() => {
+                      setSelectedMasterId(OWNER_SCOPE_VALUE);
+                      setMasterDropdownOpen(false);
+                    }}
+                  >
+                    <span className="booking-service-option-icon">🏪</span>
+                    <span className="booking-service-option-body">
+                      <span className="booking-service-option-name">{ownerMasterName}</span>
+                      <span className="booking-service-option-meta">İşletme Sahibi</span>
+                    </span>
+                    <span className="booking-service-option-pill">Seç</span>
+                  </button>
+
+                  {activeMasters.map((master, index) => (
+                    <button
+                      key={master._id}
+                      type="button"
+                      className={`booking-service-option ${String(selectedMasterId) === String(master._id) ? 'active' : ''}`}
+                      onClick={() => {
+                        setSelectedMasterId(String(master._id));
+                        setMasterDropdownOpen(false);
+                      }}
+                      style={{ '--service-accent': ['#8B4513', '#B87333', '#D18A1F', '#4A7C59'][index % 4] }}
+                    >
+                      <span className="booking-service-option-icon">🧑‍🔧</span>
+                      <span className="booking-service-option-body">
+                        <span className="booking-service-option-name">{master.name}</span>
+                        <span className="booking-service-option-meta">
+                          {master.specialty ? master.specialty : 'Usta'}
+                        </span>
+                      </span>
+                      <span className="booking-service-option-pill">Seç</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {activeMasters.length === 0 && (
+              <div className="booking-info-note mt-2">Bu salon için aktif usta tanımlı değil. İşletme sahibi ile devam edilir.</div>
             )}
           </div>
 
@@ -727,19 +821,22 @@ useEffect(() => {
                   <button
                     key={slot._id}
                     type="button"
-                    className={`booking-time-chip ${selectedSlot === slot ? 'active' : ''} ${slot.isPastSlot ? 'disabled' : ''}`}
+                    className={`booking-time-chip ${selectedSlot === slot ? 'active' : ''} ${(!slot.isBookable || slot.isPastSlot) ? 'disabled' : ''}`}
                     onClick={() => {
-                      if (!slot.isPastSlot) {
+                      if (slot.isBookable && !slot.isPastSlot) {
                         setSelectedSlot(slot);
                       }
                     }}
-                    disabled={slot.isPastSlot}
+                    disabled={!slot.isBookable || slot.isPastSlot}
                   >
                     {slot._id === recommendedSlotId && !slot.isPastSlot && (
                       <span className="booking-time-chip-badge">Önerilen</span>
                     )}
                     {slot.isPastSlot && (
                       <span className="booking-time-chip-badge booking-time-chip-badge-muted">Geçti</span>
+                    )}
+                    {!slot.isPastSlot && !slot.isBookable && (
+                      <span className="booking-time-chip-badge booking-time-chip-badge-muted">Dolu</span>
                     )}
                     {slot.time}
                   </button>
@@ -758,13 +855,13 @@ useEffect(() => {
           {selectedService && selectedDate && selectedSlot && (
             <div className="booking-step4-card mt-3">
               <div className="booking-section-title mb-2">4. Onay</div>
-              <div className="small text-muted mb-2">Seçimlerin hazır. Ödemeye geçerek randevunu tamamlayabilirsin.</div>
+              <div className="small text-muted mb-2">Seçimlerin hazır. Onaydan sonra randevun berber onayına düşecektir.</div>
               <div className="booking-comparison-mini mb-2">
                 <span>Seçili hizmet</span>
                 <strong>{selectedService?.name} · ₺{selectedPrice} · {selectedService?.duration || 0} dk</strong>
               </div>
-              <button className="btn btn-outline-primary" onClick={() => setShowPayment(true)}>
-                Ödemeye Geç
+              <button className="btn btn-outline-primary" onClick={handleCompleteBooking} disabled={isSubmittingBooking}>
+                {isSubmittingBooking ? 'Onaylanıyor...' : 'Randevuyu Onayla'}
               </button>
             </div>
           )}
@@ -774,16 +871,16 @@ useEffect(() => {
       {selectedBarber && selectedService && selectedDate && selectedSlot && isMobile && visibleStep === 4 && (
         <div className="booking-section-card mt-3">
           <div className="booking-section-title">4. Onay</div>
-          <div className="small text-muted mb-2">Randevu özetini kontrol et ve işlemi tamamla.</div>
+          <div className="small text-muted mb-2">Randevu özetini kontrol et ve berber onayı için gönder.</div>
           <div className="booking-step4-card">
             <div className="booking-summary-item"><span>Salon</span><strong>{selectedBarber?.salonName || selectedBarber?.name || '-'}</strong></div>
-            <div className="booking-summary-item"><span>Usta</span><strong>{selectedMaster?.name || 'Farketmez'}</strong></div>
+            <div className="booking-summary-item"><span>Usta</span><strong>{selectedMasterLabel}</strong></div>
             <div className="booking-summary-item"><span>Hizmet</span><strong>{selectedService?.name || '-'}</strong></div>
             <div className="booking-summary-item"><span>Tarih / Saat</span><strong>{selectedDate} {selectedSlot?.time}</strong></div>
             <div className="booking-summary-item booking-summary-total"><span>Tutar</span><strong>{selectedPrice > 0 ? `₺${selectedPrice}` : 'Seçilmedi'}</strong></div>
           </div>
-          <button className="btn btn-primary w-100 mt-3" onClick={() => setShowPayment(true)}>
-            Randevuyu Tamamla
+          <button className="btn btn-primary w-100 mt-3" onClick={handleCompleteBooking} disabled={isSubmittingBooking}>
+            {isSubmittingBooking ? 'Onaylanıyor...' : 'Randevuyu Onayla'}
           </button>
         </div>
       )}
@@ -807,7 +904,7 @@ useEffect(() => {
             </div>
             <div className="booking-summary-item">
               <span>Usta</span>
-              <strong>{selectedMaster?.name || 'Farketmez'}</strong>
+              <strong>{selectedMasterLabel}</strong>
             </div>
             <div className="booking-summary-item">
               <span>Hizmet</span>
@@ -825,9 +922,9 @@ useEffect(() => {
             <button
               className="btn btn-primary w-100 mt-2"
               disabled={!selectedService || !selectedSlot}
-              onClick={() => setShowPayment(true)}
+              onClick={handleCompleteBooking}
             >
-              Randevuyu Tamamla
+              {isSubmittingBooking ? 'Onaylanıyor...' : 'Randevuyu Onayla'}
             </button>
 
             <div className="booking-policy-note mt-2">Randevu sonrası onay süreci berber tarafından tamamlanır.</div>
@@ -856,45 +953,6 @@ useEffect(() => {
         </div>
       )}
 
-      {/* Ödeme Modalı */}
-      {showPayment && (
-        <div className="modal d-block" tabIndex="-1" onClick={() => setShowPayment(false)}>
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 className="modal-title">💳 Ödeme</h5>
-                <button type="button" className="btn-close" onClick={() => setShowPayment(false)}></button>
-              </div>
-              <div className="modal-body">
-                <p>Randevu: {selectedDate} {selectedSlot?.time}</p>
-                <p>Berber: {selectedBarber?.name}</p>
-                <p>Usta: {selectedMaster?.name || 'Farketmez'}</p>
-                <p>Kapora: <strong>100 TL</strong></p>
-                {paymentStatus === null && (
-                  <>
-                    <input type="text" className="form-control mb-2" placeholder="Kart Numarası" />
-                    <div className="d-flex gap-2">
-                      <input type="text" className="form-control" placeholder="AA/YY" />
-                      <input type="text" className="form-control" placeholder="CVV" />
-                    </div>
-                  </>
-                )}
-                {paymentStatus === 'processing' && <div className="text-warning">⏳ İşleniyor...</div>}
-                {paymentStatus === 'success' && <div className="text-success">✅ Ödeme Başarılı! Randevunuz oluşturuldu.</div>}
-                {paymentStatus === 'error' && <div className="text-danger">❌ Hata oluştu. Tekrar deneyin.</div>}
-              </div>
-              <div className="modal-footer">
-                {paymentStatus === null && (
-                  <>
-                    <button onClick={processPayment} className="btn btn-primary">100 TL Öde</button>
-                    <button onClick={() => setShowPayment(false)} className="btn btn-secondary">İptal</button>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -38,6 +38,8 @@ function enrichBarbersWithReviewStats(barbers) {
       address: barber.address,
       city: barber.city,
       district: barber.district,
+      facebookUrl: barber.facebookUrl || '',
+      instagramUrl: barber.instagramUrl || '',
       workingHours: barber.workingHours || null,
       services: Array.isArray(barber.services) ? barber.services : [],
       status: barber.status,

@@ -179,6 +179,7 @@ function BarberHome() {
   const [nowTick, setNowTick] = useState(Date.now());
   const [confirmAction, setConfirmAction] = useState(null);
   const [summaryModal, setSummaryModal] = useState(null);
+  const [completionNoticeModal, setCompletionNoticeModal] = useState({ show: false, text: '' });
   const [recentlyDeletedSlot, setRecentlyDeletedSlot] = useState(null);
   const [recentlyDeletedSlotId, setRecentlyDeletedSlotId] = useState('');
   const [mobileHomeTab, setMobileHomeTab] = useState('actions');
@@ -193,6 +194,33 @@ function BarberHome() {
   const currentCalendarDate = useMemo(() => new Date(nowTick), [nowTick]);
   const currentYear = currentCalendarDate.getFullYear();
   const currentMonthIndex = currentCalendarDate.getMonth();
+  const spotlightMeta = useMemo(() => {
+    const hour = currentCalendarDate.getHours();
+    if (hour < 12) {
+      return {
+        emoji: '☀️',
+        title: 'Günün odağı',
+        text: 'Sabah saatleri yeni müşteri kazanmak için en güçlü zaman. Uyarıları hızlı kapat, gününü temiz başlat.',
+        tone: 'morning',
+      };
+    }
+
+    if (hour < 18) {
+      return {
+        emoji: '🌤️',
+        title: 'Günün odağı',
+        text: 'Öğleden sonra randevu akışı hızlanır. Onay ve reschedule taleplerini sırayla kapat.',
+        tone: 'day',
+      };
+    }
+
+    return {
+      emoji: '🌙',
+      title: 'Günün odağı',
+      text: 'Akşam kapanışa yakın en kritik şey yarının takvimi. Onaylı randevuları ve eksikleri gözden geçir.',
+      tone: 'evening',
+    };
+  }, [currentCalendarDate]);
   const formatDateDayMonthYear = (dateStr) => {
     const [year, month, day] = String(dateStr || '').split('-');
     if (!year || !month || !day) {
@@ -266,6 +294,8 @@ function BarberHome() {
     { key: 'calendar', label: 'Takvim', icon: '📅' },
     { key: 'stats', label: 'İstatistikler', icon: '📊' },
     { key: 'settings', label: 'Mağaza Ayarları', icon: '⚙️' },
+    { key: 'store', label: 'Berber Store', icon: '🛒' },
+    { key: 'gallery', label: 'Galeri', icon: '🖼️' },
   ];
   const isMasterUser = currentUserRole === 'master';
   const canAccessSection = (sectionKey) => {
@@ -274,6 +304,8 @@ function BarberHome() {
     }
 
     if (sectionKey === 'home') return currentMasterPermissions.home !== false;
+    if (sectionKey === 'store') return true;
+    if (sectionKey === 'gallery') return true;
     if (sectionKey === 'calendar') return Boolean(currentMasterPermissions.calendar);
     if (sectionKey === 'services') return Boolean(currentMasterPermissions.services);
     if (sectionKey === 'stats') return Boolean(currentMasterPermissions.stats);
@@ -1031,6 +1063,10 @@ function BarberHome() {
       }
 
       setActionMessage({ text: 'Randevu tamamlandı olarak işaretlendi.', type: 'success' });
+      setCompletionNoticeModal({
+        show: true,
+        text: 'Randevu tamamlandı olarak işaretlendi.',
+      });
     } catch (err) {
       setActionMessage({ text: err.response?.data?.error || 'Randevu tamamlanamadı', type: 'error' });
     } finally {
@@ -1457,9 +1493,6 @@ function BarberHome() {
           </button>
 
           <div className="topbar-actions" ref={headerMenuRef}>
-            <button type="button" className="topbar-action-btn" title="Bildirimler">
-              🔔
-            </button>
             <button
               type="button"
               className="topbar-profile"
@@ -1523,6 +1556,7 @@ function BarberHome() {
                   </div>
                 </div>
 
+
                 <div className="barber-home-hero-stat">
                   <div className="barber-home-hero-stat-label">Bu ay onaylı ciro</div>
                   <div className="barber-home-hero-stat-value">₺{dashboardRevenueEstimate.toLocaleString('tr-TR')}</div>
@@ -1530,26 +1564,21 @@ function BarberHome() {
                 </div>
               </div>
 
-              <div className="barber-home-mobile-tabs" role="tablist" aria-label="Mobil ana sayfa sekmeleri">
-                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'actions' ? 'active' : ''}`} onClick={() => setMobileHomeTab('actions')}>Aksiyon</button>
-                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'today' ? 'active' : ''}`} onClick={() => setMobileHomeTab('today')}>Bugün</button>
-                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'revenue' ? 'active' : ''}`} onClick={() => setMobileHomeTab('revenue')}>Yorumlar</button>
-                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'settings' ? 'active' : ''}`} onClick={() => setMobileHomeTab('settings')}>Ayarlar</button>
+              <div className={`barber-home-panel barber-home-critical-panel mt-3 barber-home-spotlight-${spotlightMeta.tone}`}>
+                <div className="d-flex align-items-start justify-content-between gap-3 flex-wrap">
+                  <div className="d-flex align-items-center gap-3">
+                    <div className="rounded-circle d-flex align-items-center justify-content-center shadow-sm" style={{ width: '56px', height: '56px', background: 'linear-gradient(135deg, #fff3cd 0%, #fde68a 100%)', fontSize: '1.4rem' }}>
+                      {spotlightMeta.emoji}
+                    </div>
+                    <div>
+                      <div className="barber-home-panel-title mb-1">{spotlightMeta.title}</div>
+                      <div className="barber-home-panel-subtitle mb-0">{spotlightMeta.text}</div>
+                    </div>
+                  </div>
+                  <span className="badge rounded-pill bg-dark text-white align-self-center">{currentCalendarDate.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
               </div>
 
-              <div className={`barber-home-actions-strip ${mobileSectionClass('actions')}`}>
-                {quickActions.map((item) => (
-                  <button key={item.key} type="button" className="barber-home-action-card" onClick={item.action}>
-                    <span className="barber-home-action-icon">{item.icon}</span>
-                    <span className="barber-home-action-body">
-                      <strong>{item.label}</strong>
-                      <small>{item.description}</small>
-                    </span>
-                  </button>
-                ))}
-              </div>
-
-              {isMasterUser && (
               <div className={`barber-home-panel barber-home-alert-queue-panel barber-home-critical-panel ${mobileSectionClass('actions')}`}>
                 <div className="barber-home-panel-head">
                   <div>
@@ -1558,11 +1587,6 @@ function BarberHome() {
                   </div>
                   <span className="barber-home-panel-badge info">{actionableAlertCount} aksiyon bekliyor</span>
                 </div>
-                {!isMasterUser && (
-                  <div className="alert alert-info py-2 px-3 mb-3">
-                    Bu bölüm işletme hesabında yalnızca görüntülenir. İşlemler usta hesabından yapılır.
-                  </div>
-                )}
 
                 {dashboardBookedSlots.length > 0 ? (
                   <div className="barber-home-alert-queue-list">
@@ -1590,28 +1614,24 @@ function BarberHome() {
                               <span className="badge bg-warning text-dark">Müşteri yanıtı bekleniyor</span>
                             </div>
                           ) : slotStatusLc === 'reschedule_pending_barber' ? (
-                            isMasterUser ? (
-                              <div className="barber-home-alert-queue-actions">
-                                <button
-                                  type="button"
-                                  className="btn btn-success btn-sm"
-                                  onClick={() => handleFinalizeRescheduleFromAlerts(slot, 'approve')}
-                                  disabled={isSaving}
-                                >
-                                  Son Onay Ver
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn btn-outline-danger btn-sm"
-                                  onClick={() => handleFinalizeRescheduleFromAlerts(slot, 'reject')}
-                                  disabled={isSaving}
-                                >
-                                  Son Onayı Reddet
-                                </button>
-                              </div>
-                            ) : (
-                              <span className="badge bg-secondary">Sadece görüntüleme</span>
-                            )
+                            <div className="barber-home-alert-queue-actions">
+                              <button
+                                type="button"
+                                className="btn btn-success btn-sm"
+                                onClick={() => handleFinalizeRescheduleFromAlerts(slot, 'approve')}
+                                disabled={isSaving}
+                              >
+                                Son Onay Ver
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-outline-danger btn-sm"
+                                onClick={() => handleFinalizeRescheduleFromAlerts(slot, 'reject')}
+                                disabled={isSaving}
+                              >
+                                Son Onayı Reddet
+                              </button>
+                            </div>
                           ) : isEditing ? (
                             <div className="barber-home-alert-queue-editor">
                               <input
@@ -1634,67 +1654,61 @@ function BarberHome() {
                                 }))}
                                 disabled={isSaving}
                               />
-                              {isMasterUser && (
-                                <div className="barber-home-alert-queue-actions compact">
-                                  <button
-                                    type="button"
-                                    className="btn btn-primary btn-sm"
-                                    onClick={() => handleRescheduleFromAlerts(slot)}
-                                    disabled={isSaving}
-                                  >
-                                    Kaydet
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="btn btn-outline-secondary btn-sm"
-                                    onClick={() => setEditingAlertSlotId('')}
-                                    disabled={isSaving}
-                                  >
-                                    Vazgeç
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            isMasterUser ? (
-                              <div className="barber-home-alert-queue-actions">
+                              <div className="barber-home-alert-queue-actions compact">
                                 <button
                                   type="button"
-                                  className="btn btn-success btn-sm"
-                                  onClick={() => handleApproveFromAlerts(slot)}
+                                  className="btn btn-primary btn-sm"
+                                  onClick={() => handleRescheduleFromAlerts(slot)}
                                   disabled={isSaving}
                                 >
-                                  Onayla
+                                  Kaydet
                                 </button>
                                 <button
                                   type="button"
-                                  className="btn btn-warning btn-sm"
-                                  onClick={() => startRescheduleFromAlerts(slot)}
+                                  className="btn btn-outline-secondary btn-sm"
+                                  onClick={() => setEditingAlertSlotId('')}
                                   disabled={isSaving}
                                 >
-                                  Saat Düzenle
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn btn-danger btn-sm"
-                                  onClick={() => setConfirmAction({
-                                    kind: 'cancel-alert',
-                                    slot,
-                                    title: 'Randevuyu İptal Et',
-                                    message: `${slot.customerName || slot.customer?.name || 'Bu müşteri'} için iptal sebebini yazarak işlemi tamamlayın.`,
-                                    confirmText: 'İptal Et',
-                                    variant: 'danger',
-                                    showReason: true,
-                                    reasonValue: 'Berber tarafından iptal edildi',
-                                  })}
-                                  disabled={isSaving}
-                                >
-                                  İptal
+                                  Vazgeç
                                 </button>
                               </div>
-                            ) : (
-                              <span className="badge bg-secondary">Sadece görüntüleme</span>
-                            )
+                            </div>
+                          ) : (
+                            <div className="barber-home-alert-queue-actions">
+                              <button
+                                type="button"
+                                className="btn btn-success btn-sm"
+                                onClick={() => handleApproveFromAlerts(slot)}
+                                disabled={isSaving}
+                              >
+                                Onayla
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-warning btn-sm"
+                                onClick={() => startRescheduleFromAlerts(slot)}
+                                disabled={isSaving}
+                              >
+                                Saat Düzenle
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-danger btn-sm"
+                                onClick={() => setConfirmAction({
+                                  kind: 'cancel-alert',
+                                  slot,
+                                  title: 'Randevuyu İptal Et',
+                                  message: `${slot.customerName || slot.customer?.name || 'Bu müşteri'} için iptal sebebini yazarak işlemi tamamlayın.`,
+                                  confirmText: 'İptal Et',
+                                  variant: 'danger',
+                                  showReason: true,
+                                  reasonValue: 'Berber tarafından iptal edildi',
+                                })}
+                                disabled={isSaving}
+                              >
+                                İptal
+                              </button>
+                            </div>
                           )}
                         </div>
                       );
@@ -1704,7 +1718,25 @@ function BarberHome() {
                   <div className="barber-home-empty-state">Şu an bekleyen yeni randevu yok.</div>
                 )}
               </div>
-              )}
+
+              <div className="barber-home-mobile-tabs" role="tablist" aria-label="Mobil ana sayfa sekmeleri">
+                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'actions' ? 'active' : ''}`} onClick={() => setMobileHomeTab('actions')}>Aksiyon</button>
+                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'today' ? 'active' : ''}`} onClick={() => setMobileHomeTab('today')}>Bugün</button>
+                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'revenue' ? 'active' : ''}`} onClick={() => setMobileHomeTab('revenue')}>Yorumlar</button>
+                <button type="button" className={`barber-home-mobile-tab ${mobileHomeTab === 'settings' ? 'active' : ''}`} onClick={() => setMobileHomeTab('settings')}>Ayarlar</button>
+              </div>
+
+              <div className={`barber-home-actions-strip ${mobileSectionClass('actions')}`}>
+                {quickActions.map((item) => (
+                  <button key={item.key} type="button" className="barber-home-action-card" onClick={item.action}>
+                    <span className="barber-home-action-icon">{item.icon}</span>
+                    <span className="barber-home-action-body">
+                      <strong>{item.label}</strong>
+                      <small>{item.description}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
 
               <div className={`barber-home-panel barber-home-alert-queue-panel barber-home-confirmed-panel ${mobileSectionClass('today')}`}>
                 <div className="barber-home-panel-head">
@@ -1739,7 +1771,7 @@ function BarberHome() {
                             </div>
                             <div className="barber-home-alert-queue-actions">
                               <span className="badge bg-success">Bugün</span>
-                              {isMasterUser && canShowCompleteAction && (
+                              {canShowCompleteAction && (
                                 <button
                                   type="button"
                                   className="btn btn-outline-success btn-sm"
@@ -1913,6 +1945,146 @@ function BarberHome() {
                 </div>
               </div>
 
+            </div>
+          )}
+
+          {activeSection === 'store' && (
+            <div className="barber-home-dashboard">
+              <div className="barber-home-hero" style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 45%, #334155 100%)' }}>
+                <div className="barber-home-hero-copy">
+                  <div className="barber-home-kicker text-white-50">Berber Store</div>
+                  <h1 className="page-title barber-home-title text-white">Hazırlanıyor</h1>
+                  <p className="page-subtitle barber-home-subtitle text-white-50">
+                    Berberlerin profesyonel ürünleri toptan ve en uygun fiyatlarla sipariş verebileceği yeni market çok yakında burada olacak.
+                  </p>
+                </div>
+                <div className="barber-home-hero-stat">
+                  <div className="barber-home-hero-stat-label text-white-50">Yakında</div>
+                  <div className="barber-home-hero-stat-value text-white">Toptan market</div>
+                  <div className="barber-home-hero-stat-subtitle text-white-50">Salonlar için özel ürün tedarik merkezi</div>
+                </div>
+              </div>
+
+              <div className="row g-3 mt-1">
+                <div className="col-12 col-lg-7">
+                  <div className="card border-0 shadow-sm h-100">
+                    <div className="card-body p-4 p-lg-5">
+                      <div className="d-flex align-items-center gap-3 mb-3">
+                        <div className="rounded-circle d-inline-flex align-items-center justify-content-center" style={{ width: '54px', height: '54px', background: '#e8f3ff', fontSize: '1.4rem' }}>🛒</div>
+                        <div>
+                          <h2 className="h4 mb-1">Berber Store çok yakında açılıyor</h2>
+                          <div className="text-muted">Salonunuzun ihtiyaç duyduğu ürünler tek merkezde toplanacak.</div>
+                        </div>
+                      </div>
+
+                      <p className="mb-3">
+                        Berberler bu market üzerinden ürünlerini <strong>toptan</strong> ve <strong>en uygun fiyatlarla</strong> sipariş verebilecek.
+                        Siparişler <strong>kargo</strong> veya <strong>özel araçlarla</strong> teslim edilecek, ayrıca <strong>haftalık sevkiyat</strong> planı uygulanacak.
+                        Ödemelerde <strong>kredi kartı</strong> ve <strong>kapıda ödeme</strong> seçenekleri sunulacak.
+                      </p>
+
+                      <div className="d-grid gap-2">
+                        <div className="d-flex align-items-start gap-3 p-3 rounded-3 bg-light">
+                          <span className="fs-4">📦</span>
+                          <div>
+                            <div className="fw-semibold">Toptan alım avantajı</div>
+                            <div className="text-muted small">Ürünler salonların ihtiyacına göre toplu sipariş mantığıyla sunulacak.</div>
+                          </div>
+                        </div>
+                        <div className="d-flex align-items-start gap-3 p-3 rounded-3 bg-light">
+                          <span className="fs-4">🚚</span>
+                          <div>
+                            <div className="fw-semibold">Kargo veya özel araç teslimatı</div>
+                            <div className="text-muted small">Siparişler bölgeye göre hızlı ve güvenli teslimat seçenekleriyle ulaştırılacak.</div>
+                          </div>
+                        </div>
+                        <div className="d-flex align-items-start gap-3 p-3 rounded-3 bg-light">
+                          <span className="fs-4">💳</span>
+                          <div>
+                            <div className="fw-semibold">Esnek ödeme seçenekleri</div>
+                            <div className="text-muted small">Kredi kartı ya da kapıda ödeme ile alışveriş yapılabilecek.</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="col-12 col-lg-5">
+                  <div className="card border-0 shadow-sm h-100">
+                    <div className="card-body p-4 p-lg-5">
+                      <h3 className="h5 mb-3">Planlanan sistem</h3>
+                      <div className="d-grid gap-3">
+                        <div className="p-3 rounded-3 border">
+                          <div className="fw-semibold mb-1">Haftalık sevkiyat</div>
+                          <div className="text-muted small">Tedarik planı düzenli sevkiyatlarla işletmelere ulaşacak.</div>
+                        </div>
+                        <div className="p-3 rounded-3 border">
+                          <div className="fw-semibold mb-1">Ürün çeşitliliği</div>
+                          <div className="text-muted small">Bakım, sarf ve profesyonel salon ürünleri tek çatı altında toplanacak.</div>
+                        </div>
+                        <div className="p-3 rounded-3 border">
+                          <div className="fw-semibold mb-1">Sipariş takibi</div>
+                          <div className="text-muted small">Hazırlanıyor, yolda ve teslim edildi adımları sonradan eklenebilir.</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'gallery' && (
+            <div className="barber-home-dashboard">
+              <div className="barber-home-hero">
+                <div className="barber-home-hero-copy">
+                  <div className="barber-home-kicker">Galeri</div>
+                  <h1 className="page-title barber-home-title">Salon vitrini</h1>
+                  <p className="page-subtitle barber-home-subtitle">
+                    Çalışmalarınızın, salon ortamınızın ve öncesi-sonrası görsellerinin paylaşılacağı alan burada yer alacak.
+                  </p>
+                </div>
+                <div className="barber-home-hero-stat">
+                  <div className="barber-home-hero-stat-label">Yakında</div>
+                  <div className="barber-home-hero-stat-value">Görsel vitrin</div>
+                  <div className="barber-home-hero-stat-subtitle">Salonunuzu daha güçlü anlatın</div>
+                </div>
+              </div>
+
+              <div className="row g-3 mt-1">
+                <div className="col-12 col-md-4">
+                  <div className="card border-0 shadow-sm h-100">
+                    <div className="card-body p-4 text-center">
+                      <div className="display-6 mb-2">📸</div>
+                      <div className="fw-semibold mb-1">Çalışma Kareleri</div>
+                      <div className="text-muted small">Öne çıkan saç ve sakal çalışmaları.</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="col-12 col-md-4">
+                  <div className="card border-0 shadow-sm h-100">
+                    <div className="card-body p-4 text-center">
+                      <div className="display-6 mb-2">✨</div>
+                      <div className="fw-semibold mb-1">Salon Atmosferi</div>
+                      <div className="text-muted small">Müşterinin mekana güven duymasını sağlar.</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="col-12 col-md-4">
+                  <div className="card border-0 shadow-sm h-100">
+                    <div className="card-body p-4 text-center">
+                      <div className="display-6 mb-2">🪞</div>
+                      <div className="fw-semibold mb-1">Önce / Sonra</div>
+                      <div className="text-muted small">Dönüşümü en net şekilde gösterir.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="alert alert-info mt-3 mb-0">
+                Galeri bölümü hazırlanıyor. Görsel yükleme ve düzenleme alanları daha sonra buraya eklenecek.
+              </div>
             </div>
           )}
 
@@ -2749,6 +2921,36 @@ function BarberHome() {
                 ) : (
                   <div className="barber-home-empty-state">Gösterilecek kayıt yok.</div>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {completionNoticeModal.show && (
+        <div className="modal d-block" tabIndex="-1" role="dialog" aria-modal="true" onClick={() => setCompletionNoticeModal({ show: false, text: '' })}>
+          <div className="modal-dialog modal-dialog-centered" role="document" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-content border-0 shadow">
+              <div className="modal-header">
+                <h5 className="modal-title">Randevu Tamamlandı</h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  aria-label="Kapat"
+                  onClick={() => setCompletionNoticeModal({ show: false, text: '' })}
+                />
+              </div>
+              <div className="modal-body">
+                <p className="mb-0">{completionNoticeModal.text || 'Randevu tamamlandı.'}</p>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => setCompletionNoticeModal({ show: false, text: '' })}
+                >
+                  Tamam
+                </button>
               </div>
             </div>
           </div>
