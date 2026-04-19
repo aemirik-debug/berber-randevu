@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { API_URL } from '../services/runtimeConfig';
 
 function BarberList() {
   const [district, setDistrict] = useState('');
@@ -10,8 +11,7 @@ function BarberList() {
   useEffect(() => {
     const fetchBarbers = async () => {
       try {
-        // Backend 5001 portunda çalışıyor
-        const res = await axios.get('http://localhost:5001/api/barbers', { params: { district } });
+        const res = await axios.get(`${API_URL}/barbers`, { params: { district } });
         setBarbers(res.data);
       } catch (err) {
         alert('Berberler yüklenemedi: ' + (err.response?.data?.message || err.message));

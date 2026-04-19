@@ -2,22 +2,91 @@ const { startCronJobs } = require('./src/services/cronService');
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const http = require('http');
 const { Server } = require('socket.io');
 require('dotenv').config();
 
-const app = express(); // ✅ önce app tanımlanmalı
+function parseAllowedOrigins() {
+  const raw = String(process.env.CORS_ORIGINS || '').trim();
+  if (!raw) {
+    return [
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'https://berbergo.com.tr',
+      'https://www.berbergo.com.tr'
+    ];
+  }
+
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+const allowedOrigins = new Set(parseAllowedOrigins());
+
+function isAllowedOrigin(origin) {
+  if (!origin) {
+    return true;
+  }
+  return allowedOrigins.has(origin);
+}
+
+const app = express();
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { 
-    origin: "*",
-    methods: ["GET", "POST"]
+  cors: {
+    origin: (origin, callback) => {
+      if (isAllowedOrigin(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error('Socket origin izni yok'));
+    },
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
   }
 });
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.use(cors({
+  origin: (origin, callback) => {
+    if (isAllowedOrigin(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('CORS origin izni yok'));
+  },
+  methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  maxAge: 600,
+}));
+
+app.use(express.json({ limit: '200kb' }));
+
+const globalLimiter = rateLimit({
+  windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
+  max: Number(process.env.RATE_LIMIT_MAX || 300),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Çok fazla istek, lütfen daha sonra tekrar deneyin.' },
+});
+
+const authLimiter = rateLimit({
+  windowMs: Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
+  max: Number(process.env.AUTH_RATE_LIMIT_MAX || 20),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Çok fazla giriş denemesi, lütfen sonra tekrar deneyin.' },
+});
+
+app.use('/api', globalLimiter);
+app.use('/api/barbers/login', authLimiter);
+app.use('/api/barbers/master/login', authLimiter);
+app.use('/api/customers/login', authLimiter);
+app.use('/api/customers/register', authLimiter);
 
 const customerRoutes = require('./src/routes/customerRoutes');
 app.use('/api/customers', customerRoutes);
@@ -141,11 +210,17 @@ io.on('connection', (socket) => {
   console.log('🔌 Yeni bağlantı:', socket.id);
 
   socket.on('barber_login', (barberId) => {
+    if (!barberId) {
+      return;
+    }
     connectedBarbers.set(barberId.toString(), socket.id);
     console.log(`✂️ Berber ${barberId} online. Toplam: ${connectedBarbers.size}`);
   });
 
   socket.on('customer_login', (customerId) => {
+    if (!customerId) {
+      return;
+    }
     connectedCustomers.set(customerId.toString(), socket.id);
     console.log(`👤 Müşteri ${customerId} online. Toplam: ${connectedCustomers.size}`);
   });

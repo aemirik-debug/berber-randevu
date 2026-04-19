@@ -4,10 +4,9 @@ import axios from 'axios';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import { Tooltip } from 'bootstrap';
 import { connectSocket } from '../services/socket';
+import { API_BASE_URL } from '../services/runtimeConfig';
 import BookingPage from './BookingPage';
 import './CustomerHomeTheme.css';
-
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001';
 
 function CustomerHome() {
   const [activeSection, setActiveSection] = useState('home');
@@ -323,7 +322,7 @@ function CustomerHome() {
 
     setLoadingEditSlots(true);
     try {
-      const res = await axios.get('http://localhost:5001/api/slots/available', {
+      const res = await axios.get(`${API_BASE_URL}/api/slots/available`, {
         params: { barberId, date: nextDate }
       });
       const slots = res.data?.data || [];
@@ -458,7 +457,7 @@ function CustomerHome() {
     try {
       setSendingReminderAppointmentId(appointment._id);
       await axios.post(
-        `http://localhost:5001/api/slots/${appointment.slotId}/remind-barber`,
+        `${API_BASE_URL}/api/slots/${appointment.slotId}/remind-barber`,
         {
           customerId: currentCustomerId,
           customerName: `${name || ''} ${surname || ''}`.trim()
@@ -639,7 +638,7 @@ useEffect(() => {
 useEffect(() => {
   const customerInfo = getCustomerInfo();
   if (customerInfo) {
-    axios.get(`http://localhost:5001/api/customers/invoices/${customerInfo._id}`, { headers: getAuthHeaders() })
+    axios.get(`${API_BASE_URL}/api/customers/invoices/${customerInfo._id}`, { headers: getAuthHeaders() })
       .then(res => setInvoices(res.data))
       .catch(err => console.error(err));
   }
@@ -650,7 +649,7 @@ useEffect(() => {
 
   const loadCities = async () => {
     try {
-      const res = await axios.get('http://localhost:5001/api/locations/cities');
+      const res = await axios.get(`${API_BASE_URL}/api/locations/cities`);
       const cityList = Array.isArray(res.data) ? res.data : [];
       if (isCancelled) {
         return;
@@ -705,7 +704,7 @@ useEffect(() => {
     }
 
     try {
-      const res = await axios.get(`http://localhost:5001/api/locations/districts/${selectedCity}`);
+      const res = await axios.get(`${API_BASE_URL}/api/locations/districts/${selectedCity}`);
       if (isCancelled) {
         return;
       }
@@ -741,7 +740,7 @@ useEffect(() => {
     }
 
     try {
-      const res = await axios.get(`http://localhost:5001/api/locations/districts/${profileCity}`);
+      const res = await axios.get(`${API_BASE_URL}/api/locations/districts/${profileCity}`);
       if (isCancelled) {
         return;
       }
@@ -786,8 +785,8 @@ useEffect(() => {
     try {
       const hasLocationFilter = selectedCity && selectedDistrict;
       const res = hasLocationFilter
-        ? await axios.get('http://localhost:5001/api/barbers/byDistrict', { params: { city: selectedCity, district: selectedDistrict } })
-        : await axios.get('http://localhost:5001/api/barbers');
+        ? await axios.get(`${API_BASE_URL}/api/barbers/byDistrict`, { params: { city: selectedCity, district: selectedDistrict } })
+        : await axios.get(`${API_BASE_URL}/api/barbers`);
 
       if (!isCancelled) {
         const list = Array.isArray(res.data) ? res.data : [];
@@ -818,7 +817,7 @@ useEffect(() => {
 useEffect(() => {
   const customerInfo = getCustomerInfo();
   if (customerInfo) {
-    axios.get(`http://localhost:5001/api/customers/favorites/${customerInfo._id}`, { headers: getAuthHeaders() })
+    axios.get(`${API_BASE_URL}/api/customers/favorites/${customerInfo._id}`, { headers: getAuthHeaders() })
       .then(res => setFavorites(res.data))
       .catch(err => console.error(err));
   }
@@ -827,7 +826,7 @@ useEffect(() => {
   const handleUpdateProfile = async () => {
     try {
       const customerInfo = getCustomerInfo();
-      const res = await axios.put(`http://localhost:5001/api/customers/update/${customerInfo._id}`, {
+      const res = await axios.put(`${API_BASE_URL}/api/customers/update/${customerInfo._id}`, {
         name, surname, email, address, city: profileCity, district: profileDistrict
       }, { headers: getAuthHeaders() });
       setAlertMessage("Profil bilgileri güncellendi!");
@@ -854,7 +853,7 @@ useEffect(() => {
   const handleChangePassword = async () => {
   try {
     const customerInfo = getCustomerInfo();
-    const res = await axios.put(`http://localhost:5001/api/customers/update-password/${customerInfo._id}`, {
+    const res = await axios.put(`${API_BASE_URL}/api/customers/update-password/${customerInfo._id}`, {
       oldPassword, newPassword
     }, { headers: getAuthHeaders() });
     setAlertMessage(res.data.message || "Şifre başarıyla güncellendi!");
@@ -870,7 +869,7 @@ useEffect(() => {
 const handleRemoveFavorite = async (barberId) => {
   try {
     const customerInfo = getCustomerInfo();
-    await axios.delete(`http://localhost:5001/api/customers/favorites/${customerInfo._id}/${barberId}`, { headers: getAuthHeaders() });
+    await axios.delete(`${API_BASE_URL}/api/customers/favorites/${customerInfo._id}/${barberId}`, { headers: getAuthHeaders() });
     setFavorites(favorites.filter(f => f.barberId !== barberId));
     setAlertMessage("Favori başarıyla silindi!");
     setAlertType("success");
@@ -896,7 +895,7 @@ const handleAddFavorite = async (barber) => {
     };
 
     await axios.post(
-      `http://localhost:5001/api/customers/favorites/${customerInfo._id}`,
+      `${API_BASE_URL}/api/customers/favorites/${customerInfo._id}`,
       payload,
       { headers: getAuthHeaders() }
     );
@@ -1709,7 +1708,7 @@ const handleQuickBookFromFavorite = (favorite) => {
     setSubmittingReviewBarberId(barberId);
     try {
       const res = await axios.post(
-        `http://localhost:5001/api/barbers/${barberId}/reviews`,
+        `${API_BASE_URL}/api/barbers/${barberId}/reviews`,
         {
           rating,
           comment: String(draft.comment || '').trim(),
@@ -1751,7 +1750,7 @@ const handleQuickBookFromFavorite = (favorite) => {
   const handleDeleteReview = async (barberId) => {
     setSubmittingReviewBarberId(barberId);
     try {
-      const res = await axios.delete(`http://localhost:5001/api/barbers/${barberId}/reviews/me`, {
+      const res = await axios.delete(`${API_BASE_URL}/api/barbers/${barberId}/reviews/me`, {
         headers: getAuthHeaders(),
       });
 

@@ -3,7 +3,38 @@ const router = express.Router();
 const Customer = require('../models/Customer');
 const Slot = require('../models/Slot');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const authMiddleware = require('../middleware/authMiddleware');
+
+function sanitizeCustomerForClient(customerDoc) {
+  if (!customerDoc) {
+    return null;
+  }
+  const raw = customerDoc.toObject ? customerDoc.toObject() : { ...(customerDoc || {}) };
+  delete raw.password;
+  return raw;
+}
+
+async function verifyAndUpgradeCustomerPassword(customer, incomingPassword) {
+  const rawIncoming = String(incomingPassword || '');
+  const stored = String(customer?.password || '');
+  if (!rawIncoming || !stored) {
+    return false;
+  }
+
+  // Legacy kayıtlarda şifre düz metin tutulmuş olabilir.
+  if (stored.startsWith('$2a$') || stored.startsWith('$2b$') || stored.startsWith('$2y$')) {
+    return bcrypt.compare(rawIncoming, stored);
+  }
+
+  if (stored !== rawIncoming) {
+    return false;
+  }
+
+  customer.password = await bcrypt.hash(rawIncoming, 10);
+  await customer.save();
+  return true;
+}
 
 function isPastDateTime(dateStr, timeStr) {
   const date = String(dateStr || '').trim();
@@ -56,18 +87,23 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Telefon ve şifre zorunludur' });
     }
 
+    if (String(password).length < 6) {
+      return res.status(400).json({ success: false, message: 'Şifre en az 6 karakter olmalıdır' });
+    }
+
     // Aynı telefonla kayıtlı müşteri var mı kontrol et
     const existingCustomer = await Customer.findOne({ phone });
     if (existingCustomer) {
       return res.status(400).json({ success: false, message: 'Bu telefon numarası zaten kayıtlı' });
     }
 
-    const customer = new Customer({ phone, password });
+    const hashedPassword = await bcrypt.hash(String(password), 10);
+    const customer = new Customer({ phone, password: hashedPassword });
     await customer.save();
     
     const token = jwt.sign({ customerId: customer._id, role: 'customer' }, process.env.JWT_SECRET, { expiresIn: '7d' });
     
-    res.json({ success: true, message: 'Kayıt başarılı', token, customer });
+    res.json({ success: true, message: 'Kayıt başarılı', token, customer: sanitizeCustomerForClient(customer) });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }
@@ -81,14 +117,19 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Telefon ve şifre zorunludur' });
     }
 
-    const customer = await Customer.findOne({ phone, password });
+    const customer = await Customer.findOne({ phone });
     if (!customer) {
+      return res.status(404).json({ success: false, message: 'Müşteri bulunamadı veya şifre hatalı' });
+    }
+
+    const isMatch = await verifyAndUpgradeCustomerPassword(customer, password);
+    if (!isMatch) {
       return res.status(404).json({ success: false, message: 'Müşteri bulunamadı veya şifre hatalı' });
     }
 
     const token = jwt.sign({ customerId: customer._id, role: 'customer' }, process.env.JWT_SECRET, { expiresIn: '7d' });
 
-    res.json({ success: true, message: 'Giriş başarılı', token, customer });
+    res.json({ success: true, message: 'Giriş başarılı', token, customer: sanitizeCustomerForClient(customer) });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }
@@ -99,12 +140,20 @@ router.put('/update/:id', authMiddleware, async (req, res) => {
   try {
     if (!ensureCustomerAccess(req, res)) return;
 
+    const allowedFields = ['name', 'surname', 'email', 'address', 'city', 'district', 'phone'];
+    const updates = {};
+    for (const key of allowedFields) {
+      if (Object.prototype.hasOwnProperty.call(req.body, key)) {
+        updates[key] = req.body[key];
+      }
+    }
+
     const updatedCustomer = await Customer.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updates,
       { new: true }
     );
-    res.json(updatedCustomer);
+    res.json(sanitizeCustomerForClient(updatedCustomer));
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
@@ -122,15 +171,16 @@ router.put('/update-password/:id', authMiddleware, async (req, res) => {
       return res.status(404).json({ message: 'Müşteri bulunamadı' });
     }
 
-    if (isPastDateTime(date, time)) {
-      return res.status(400).json({ message: 'Geçmiş saat için randevu oluşturulamaz' });
+    if (!newPassword || String(newPassword).length < 6) {
+      return res.status(400).json({ message: 'Yeni şifre en az 6 karakter olmalıdır' });
     }
 
-    if (customer.password !== oldPassword) {
+    const isMatch = await verifyAndUpgradeCustomerPassword(customer, oldPassword);
+    if (!isMatch) {
       return res.status(400).json({ message: 'Eski şifre yanlış' });
     }
 
-    customer.password = newPassword;
+    customer.password = await bcrypt.hash(String(newPassword), 10);
     await customer.save();
 
     res.json({ message: 'Şifre başarıyla güncellendi' });

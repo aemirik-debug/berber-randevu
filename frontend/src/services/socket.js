@@ -1,12 +1,11 @@
 import io from 'socket.io-client';
-
-const SOCKET_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5001';
+import { API_BASE_URL } from './runtimeConfig';
 
 let socket = null;
 
 export const connectSocket = () => {
   if (!socket) {
-    socket = io(SOCKET_URL, {
+    socket = io(API_BASE_URL, {
       reconnectionAttempts: 5,
       timeout: 5000,
     });

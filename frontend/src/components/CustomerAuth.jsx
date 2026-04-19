@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { toast, ToastContainer } from 'react-toastify';
+import { API_URL } from '../services/runtimeConfig';
 import 'react-toastify/dist/ReactToastify.css';
 
 function CustomerAuth() {
@@ -20,7 +21,7 @@ function CustomerAuth() {
   const handleSubmit = async () => {
     try {
       if (isRegister) {
-  const res = await axios.post('http://localhost:5001/api/customers/register', {
+  const res = await axios.post(`${API_URL}/customers/register`, {
     phone: form.phone,
     password: form.password
   });
@@ -31,7 +32,7 @@ function CustomerAuth() {
     navigate('/customer/home');
   }, 1500);
 } else {
-  const res = await axios.post('http://localhost:5001/api/customers/login', {
+  const res = await axios.post(`${API_URL}/customers/login`, {
     phone: form.phone,
     password: form.password
   });
