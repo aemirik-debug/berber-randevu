@@ -272,8 +272,14 @@ function BarberDashboard() {
           <div className="d-flex justify-content-between align-items-center">
             <div>
               <h4 className="mb-1 fw-bold" style={{color: '#2c3e50'}}>
-                <span className="rounded-circle d-inline-flex align-items-center justify-content-center me-2 text-white" 
-                      style={{width: '40px', height: '40px', backgroundColor: '#3498db'}}>✂️</span>
+                <span className="rounded-circle d-inline-flex align-items-center justify-content-center me-2 overflow-hidden bg-white border" 
+                      style={{width: '40px', height: '40px', backgroundColor: '#fff', border: '1.5px solid #3498db'}}>
+                  <img
+                    src={require('../assets/barber-logo-sample.svg').default}
+                    alt="Salon logosu"
+                    style={{width: '36px', height: '36px', objectFit: 'cover', borderRadius: '50%'}}
+                  />
+                </span>
                 {barber.subscription?.plan?.toUpperCase()} Panel
               </h4>
               <small className="text-muted">

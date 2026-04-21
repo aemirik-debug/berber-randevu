@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import barberLogoSample from '../assets/barber-logo-sample.svg';
 import { useNavigate } from 'react-router-dom';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import BarberProfile from './BarberProfile';
@@ -1471,7 +1472,24 @@ function BarberHome() {
 
       {/* Sidebar */}
       <aside className={`sidebar ${showMobileMenu ? 'show' : ''}`}>
-        <div className="sidebar-logo">✂️ Berber Paneli</div>
+        {/* Büyük logo sadece masaüstünde */}
+        <div className="sidebar-logo d-none d-lg-flex">
+          <img
+            src={barberLogoSample}
+            alt="Berber Paneli Logo"
+            style={{ width: '200px', height: '190px', objectFit: 'cover', borderRadius: '30%' }}
+          />
+        </div>
+        {/* Küçük logo sadece mobilde, menü açıldığında Ana Sayfa'nın üstünde */}
+        {showMobileMenu && (
+          <div className="sidebar-logo d-flex d-lg-none justify-content-center align-items-center" style={{marginBottom: '1rem'}}>
+            <img
+              src={barberLogoSample}
+              alt="Berber Paneli Logo"
+              style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '50%' }}
+            />
+          </div>
+        )}
         <nav className="sidebar-nav">
           {visibleNavigationItems.map(renderNavItem)}
         </nav>

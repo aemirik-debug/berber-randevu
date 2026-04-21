@@ -6,8 +6,17 @@ let socket = null;
 export const connectSocket = () => {
   if (!socket) {
     socket = io(API_BASE_URL, {
-      reconnectionAttempts: 5,
-      timeout: 5000,
+      // KRİTİK AYARLAR:
+      transports: ['websocket', 'polling'], // Önce websocket dene, olmazsa polling yap
+      withCredentials: true,
+      reconnection: true,
+      reconnectionAttempts: 10, // Deneme sayısını biraz artıralım
+      reconnectionDelay: 2000,
+      timeout: 10000, // Sunucusuz sistemlerde biraz daha süre tanımak iyidir
+    });
+
+    socket.on('connect_error', (err) => {
+      console.error('Socket Bağlantı Hatası:', err.message);
     });
   }
   return socket;

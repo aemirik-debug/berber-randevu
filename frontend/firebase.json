@@ -8,7 +8,21 @@
     ],
     "rewrites": [
       {
-        "source": "/api/**",
+        "source": "/socket.io/**",
+        "run": {
+          "serviceId": "berbergo-servis",
+          "region": "europe-west3"
+        }
+      },
+      {
+        "source": "/barber/**",
+        "run": {
+          "serviceId": "berbergo-servis",
+          "region": "europe-west3"
+        }
+      },
+      {
+        "source": "/custom/**",
         "run": {
           "serviceId": "berbergo-servis",
           "region": "europe-west3"

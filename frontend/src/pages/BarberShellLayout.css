@@ -1,3 +1,12 @@
+.barber-shell .sidebar-logo {
+  /* ...mevcut stiller... */
+}
+
+@media (max-width: 991px) {
+  .barber-shell .sidebar-logo {
+    display: none !important;
+  }
+}
 /* Barber Dashboard Shell Layout - Customer Home inspired */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap');
@@ -31,15 +40,22 @@
   overflow-y: auto;
 }
 
+
 .barber-shell .sidebar-logo {
-  font-family: 'Playfair Display', serif;
-  font-size: 1.55rem;
-  font-weight: 700;
-  color: var(--cbk-charcoal);
   margin-bottom: 1.5rem;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  justify-content: center;
+  width: 100%;
+}
+
+.barber-shell .sidebar-logo img {
+  width: 200px;
+  height: 190px;
+  object-fit: cover;
+  border-radius: 30%;
+  display: block;
+  margin: 0 auto;
 }
 
 .barber-shell .sidebar-logo:hover {
