@@ -7,6 +7,8 @@ import BarberHome from './pages/BarberHome';
 import PortalEntry from './pages/PortalEntry';
 import CustomerAuth from './components/CustomerAuth';
 import BookingPage from './pages/BookingPage';
+import AdminLogin from './pages/AdminLogin';
+import AdminDashboard from './pages/AdminDashboard';
 import 'bootstrap/dist/css/bootstrap.min.css';
 
 function CustomerProtectedRoute({ children }) {
@@ -26,6 +28,17 @@ function BarberProtectedRoute({ children }) {
 
   if (!token || !barberId) {
     return <Navigate to="/barber/login" replace />;
+  }
+
+  return children;
+}
+
+function AdminProtectedRoute({ children }) {
+  const token = localStorage.getItem('adminToken');
+  const adminUser = localStorage.getItem('adminUser');
+
+  if (!token || !adminUser) {
+    return <Navigate to="/admin/login" replace />;
   }
 
   return children;
@@ -79,6 +92,19 @@ function App() {
               <CustomerProtectedRoute>
                 <BookingPage />
               </CustomerProtectedRoute>
+            )}
+          />
+
+          {/* Admin Giriş */}
+          <Route path="/admin/login" element={<AdminLogin onLoginSuccess={() => window.location.href = '/admin/dashboard'} />} />
+
+          {/* Admin Dashboard */}
+          <Route
+            path="/admin/dashboard"
+            element={(
+              <AdminProtectedRoute>
+                <AdminDashboard />
+              </AdminProtectedRoute>
             )}
           />
 

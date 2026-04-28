@@ -87,6 +87,7 @@ app.use('/api/requests', require('./src/routes/requestRoutes'));
 app.use('/api/subscription', require('./src/routes/subscriptionRoutes'));
 app.use('/api/slots', require('./src/routes/slotRoutes'));
 app.use('/api/upload', require('./src/routes/uploadRoutes'));
+app.use('/api/admin', require('./src/routes/adminRoutes'));
 
 // --- WHATSAPP WEBHOOK (Berberden gelen yanıtı yakalar) ---
 app.post('/webhook/whatsapp-reply', async (req, res) => {
@@ -206,14 +207,22 @@ async function ensureSlotIndexes() {
 }
 
 // MongoDB Bağlantı
-mongoose.connect(process.env.MONGODB_URI)
+mongoose.connect(process.env.MONGODB_URI, {
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+  retryWrites: true,
+  w: 'majority'
+})
   .then(async () => {
     console.log('✅ MongoDB bağlandı');
     await ensureSlotIndexes();
   })
   .catch(err => {
     console.error('❌ MongoDB hatası:', err.message);
-    process.exit(1);
+    // Prod'de exit etme, dev'de devam et
+    if (process.env.NODE_ENV === 'production') {
+      process.exit(1);
+    }
   });
 
 // Socket.io Mantığı
@@ -262,14 +271,17 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, next) => {
-  console.error('Hata:', err);
-  res.status(500).json({ success: false, error: 'Sunucu hatası' });
+  console.error('🔴 HATA DETAYI:');
+  console.error('Message:', err.message);
+  console.error('Stack:', err.stack);
+  res.status(500).json({ success: false, error: err.message || 'Sunucu hatası' });
 });
 
 // --- GOOGLE CLOUD İÇİN KRİTİK PORT AYARI ---
 const PORT = process.env.PORT || 8080;
 
-startCronJobs(io, connectedBarbers);
+// TODO: Cron jobs temporarily disabled due to MongoDB connection timeout in testing
+// startCronJobs(io, connectedBarbers);
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server port ${PORT} üzerinde aktif`);

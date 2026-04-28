@@ -1,8 +1,10 @@
 import { Platform } from 'react-native';
 
 const isAndroid = Platform.OS === 'android';
+const isWeb = Platform.OS === 'web';
 const defaultHost = isAndroid ? '10.0.2.2' : 'localhost';
-const host = process.env.EXPO_PUBLIC_API_HOST || defaultHost;
+const envHost = process.env.EXPO_PUBLIC_API_HOST;
+const host = isWeb ? 'localhost' : (envHost || defaultHost);
 const port = process.env.EXPO_PUBLIC_API_PORT || '5001';
 
 const PRODUCTION_URL = 'https://berbergo-servis-91248109536.europe-west3.run.app';
