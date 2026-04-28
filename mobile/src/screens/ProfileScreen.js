@@ -10,7 +10,7 @@ import { API_BASE_URL } from '../config/api';
 import { api } from '../services/apiClient';
 
 export default function ProfileScreen({ navigation }) {
-  const { user, customerId, logout, refreshProfile } = useAuth();
+  const { user, customerId, token, logout, refreshProfile } = useAuth();
   const [name, setName] = useState(user?.name || '');
   const [surname, setSurname] = useState(user?.surname || '');
   const [email, setEmail] = useState(user?.email || '');
@@ -89,7 +89,7 @@ export default function ProfileScreen({ navigation }) {
       const response = await fetch(`${API_BASE_URL}/api/upload/customer/photo`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${await getToken()}`,
+          'Authorization': `Bearer ${token}`,
         },
         body: formData,
       });
@@ -102,17 +102,11 @@ export default function ProfileScreen({ navigation }) {
         showToast(data.message || 'Yükleme başarısız', 'danger');
       }
     } catch (err) {
+      console.log('Upload error:', err);
       showToast('Fotoğraf yüklenirken hata oluştu', 'danger');
     } finally {
       setUploadingPhoto(false);
     }
-  };
-
-  const getToken = async () => {
-    try {
-      const { getToken: gt } = require('../services/storageService');
-      return await gt();
-    } catch { return ''; }
   };
 
   const handleDeletePhoto = () => {
@@ -124,7 +118,10 @@ export default function ProfileScreen({ navigation }) {
         {
           text: 'Sil', style: 'destructive', onPress: async () => {
             try {
-              await api.delete('/upload/customer/photo');
+              await fetch(`${API_BASE_URL}/api/upload/customer/photo`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` },
+              });
               await refreshProfile();
               showToast('Profil fotoğrafı silindi', 'success');
             } catch (err) {
