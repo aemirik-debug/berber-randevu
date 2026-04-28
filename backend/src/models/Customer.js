@@ -9,6 +9,7 @@ const customerSchema = new mongoose.Schema({
   address: { type: String },
   city: { type: String },
   district: { type: String },
+  profilePhoto: { type: String, default: '' },
 // Randevular
   appointments: [{
     slotId: String,

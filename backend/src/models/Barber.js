@@ -12,6 +12,8 @@ const BarberSchema = new mongoose.Schema({
   facebookUrl: { type: String, default: '' },
   instagramUrl: { type: String, default: '' },
   logoUrl: { type: String, default: '' },
+  profilePhoto: { type: String, default: '' },
+  gallery: [{ type: String }],
   password: { type: String, required: true },
   location: {
     type: { type: String, enum: ['Point'], default: 'Point' },

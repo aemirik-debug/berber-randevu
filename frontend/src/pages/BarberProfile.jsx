@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
+import { API_URL } from '../services/runtimeConfig';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import citiesData from '../data/turkiye-il-ilce.json';
 
@@ -17,6 +18,8 @@ function BarberProfile() {
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState('success');
   const [activeSection, setActiveSection] = useState('info');
+  const [profilePhoto, setProfilePhoto] = useState('');
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -38,6 +41,7 @@ function BarberProfile() {
         setCity(data.city);
         setDistrict(data.district);
         setSubscriptionPlan(data.subscription?.plan || 'basic');
+        setProfilePhoto(data.profilePhoto || '');
       } catch (err) {
         showNotification(err.response?.data?.error || err.message, 'error');
       }
@@ -97,6 +101,32 @@ function BarberProfile() {
       showNotification(err.response?.data?.error || err.message, 'error');
     }
   };
+
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      showNotification('Fotoğraf en fazla 5MB olabilir', 'error');
+      return;
+    }
+    setUploadingPhoto(true);
+    try {
+      const formData = new FormData();
+      formData.append('photo', file);
+      const res = await api.post('/upload/barber/photo', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setProfilePhoto(res.data.photoUrl);
+      showNotification('Profil fotoğrafı güncellendi! 📸');
+    } catch (err) {
+      showNotification(err.response?.data?.message || 'Yükleme başarısız', 'error');
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
+  const baseUrl = API_URL.replace('/api', '');
+  const photoUrl = profilePhoto ? `${baseUrl}${profilePhoto}` : '';
 
   return (
     <div className="container-fluid py-4 px-0">
@@ -325,8 +355,20 @@ function BarberProfile() {
             {/* Profil Özet Kartı */}
             <div className="card border-0 shadow-sm rounded-4 mb-4" style={{backgroundColor: '#ecf0f1'}}>
               <div className="card-body p-4 text-center">
-                <div className="mb-3">
-                  <span className="display-4">👤</span>
+                <div className="mb-3 position-relative d-inline-block">
+                  {uploadingPhoto ? (
+                    <div className="d-flex align-items-center justify-content-center" style={{width: 100, height: 100, borderRadius: '50%', backgroundColor: '#ecf0f1'}}>
+                      <div className="spinner-border text-primary" />
+                    </div>
+                  ) : photoUrl ? (
+                    <img src={photoUrl} alt="Profil" style={{width: 100, height: 100, borderRadius: '50%', objectFit: 'cover', border: '3px solid #3498db'}} />
+                  ) : (
+                    <span className="display-4">👤</span>
+                  )}
+                  <label htmlFor="barberPhotoInput" className="position-absolute bottom-0 end-0 bg-primary text-white rounded-circle d-flex align-items-center justify-content-center" style={{width: 32, height: 32, cursor: 'pointer', border: '2px solid white', fontSize: '14px'}}>
+                    📷
+                  </label>
+                  <input type="file" id="barberPhotoInput" accept="image/*" onChange={handlePhotoUpload} style={{display: 'none'}} />
                 </div>
                 <h5 className="fw-bold mb-1" style={{color: '#2c3e50'}}>{fullName || 'İsimsiz Kullanıcı'}</h5>
                 <p className="text-muted mb-3">{salonName || 'Salon Adı Belirtilmemiş'}</p>

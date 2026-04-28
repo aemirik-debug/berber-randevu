@@ -5,6 +5,7 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const http = require('http');
 const { Server } = require('socket.io');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -22,7 +23,11 @@ const allowedOrigins = [
 // Middleware & Güvenlik
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
-app.use(express.json({ limit: '200kb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Static dosyalar (profil fotoğrafları, galeri)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // 1. Web İçin CORS
 app.use(cors({
@@ -81,6 +86,7 @@ app.use('/api/barbers', require('./src/routes/barberRoutes'));
 app.use('/api/requests', require('./src/routes/requestRoutes'));
 app.use('/api/subscription', require('./src/routes/subscriptionRoutes'));
 app.use('/api/slots', require('./src/routes/slotRoutes'));
+app.use('/api/upload', require('./src/routes/uploadRoutes'));
 
 // --- WHATSAPP WEBHOOK (Berberden gelen yanıtı yakalar) ---
 app.post('/webhook/whatsapp-reply', async (req, res) => {
