@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Müşteri Paneli</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body { 
+            font-family: Arial; 
+            padding: 20px; 
+            max-width: 600px; 
+            margin: 0 auto; 
+            background: #f5f5f5;
+        }
+        h1 { color: #2196F3; }
+        .barber-card { 
+            border: 2px solid #ddd; 
+            padding: 15px; 
+            margin: 10px 0; 
+            border-radius: 10px;
+            background: white;
+        }
+        .online { border-color: #4CAF50; }
+        .busy { border-color: #ff9800; }
+        button { 
+            padding: 12px 24px; 
+            background: #2196F3; 
+            color: white; 
+            border: none; 
+            border-radius: 5px; 
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover { background: #1976D2; }
+        button:disabled { 
+            background: #ccc; 
+            cursor: not-allowed; 
+        }
+        #result { 
+            margin-top: 20px; 
+            padding: 15px; 
+            background: white; 
+            border-radius: 5px;
+            border: 2px solid #ddd;
+        }
+        .success-box { border-color: #4CAF50; background: #e8f5e9; }
+        .error-box { border-color: #f44336; background: #ffebee; }
+        .waiting-box { border-color: #ff9800; background: #fff3e0; }
+        .status-badge {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status-online { background: #4CAF50; color: white; }
+        .status-busy { background: #ff9800; color: white; }
+        .status-offline { background: #f44336; color: white; }
+    </style>
+</head>
+<body>
+    <h1>👤 Müşteri Randevu Sistemi</h1>
+    
+    <div style="background: #e3f2fd; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+        <h3>📍 Konum: Ataşehir</h3>
+        <p>Yakındaki berberleri görüntülemek için butona tıklayın</p>
+        <button onclick="loadBarbers()">🔄 Berberleri Yenile</button>
+    </div>
+
+    <div id="barberList">
+        <p style="color: #666;">Berberleri görmek için "Yenile" butonuna tıklayın...</p>
+    </div>
+    
+    <div id="result" style="display: none;"></div>
+
+    <script>
+        const API = 'http://localhost:5001';
+        
+        async function loadBarbers() {
+            document.getElementById('barberList').innerHTML = '<p>Yükleniyor...</p>';
+            
+            try {
+                const res = await fetch(API + '/api/barbers/nearby?longitude=29.124&latitude=40.987');
+                const data = await res.json();
+                
+                let html = `<h2>Yakındaki Berberler (${data.count})</h2>`;
+                
+                if (data.count === 0) {
+                    html += `
+                        <div style="background: #ffebee; padding: 15px; border-radius: 5px; color: #c62828;">
+                            <p>❌ Şu an aktif berber yok!</p>
+                            <p>💡 İpucu: Berber test sayfasında giriş yapıp "Online" durumuna geçmeli.</p>
+                        </div>
+                    `;
+                } else {
+                    data.data.forEach(b => {
+                        const statusClass = b.status === 'online' ? 'online' : (b.status === 'busy' ? 'busy' : '');
+                        const statusBadge = b.status === 'online' 
+                            ? '<span class="status-badge status-online">🟢 MÜSAİT</span>' 
+                            : (b.status === 'busy' 
+                                ? '<span class="status-badge status-busy">🟡 MEŞGUL</span>' 
+                                : '<span class="status-badge status-offline">🔴 KAPALI</span>');
+                        
+                        const servicesList = b.services.map(s => 
+                            `${s.name}: ${s.price}TL (${s.duration}dk)`
+                        ).join('<br>');
+                        
+                        html += `
+                            <div class="barber-card ${statusClass}">
+                                <h3>${b.name} ${statusBadge}</h3>
+                                <p><strong>📍 Adres:</strong> ${b.address}</p>
+                                <p><strong>💇 Hizmetler:</strong><br>${servicesList}</p>
+                                
+                                ${b.status === 'online' 
+                                    ? `<button onclick="sendRequest('${b._id}', '${b.name.replace(/'/g, "\\'")}')">📅 Randevu Talebi Gönder</button>`
+                                    : `<button disabled>Şu An Müsait Değil</button>`
+                                }
+                            </div>
+                        `;
+                    });
+                }
+                
+                document.getElementById('barberList').innerHTML = html;
+                
+            } catch (e) {
+                document.getElementById('barberList').innerHTML = `
+                    <div style="color: #c62828; padding: 15px;">
+                        <p>❌ Hata: ${e.message}</p>
+                        <p>Sunucu çalışıyor mu kontrol edin (http://localhost:5001)</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function sendRequest(barberId, barberName) {
+            const phone = prompt('📱 Telefon numaranızı girin:', '5559998877');
+            if (!phone) return;
+
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'waiting-box';
+            resultDiv.innerHTML = `
+                <h3>⏳ Talep Gönderiliyor...</h3>
+                <p>Berber: <strong>${barberName}</strong></p>
+                <p>Telefon: <strong>${phone}</strong></p>
+            `;
+
+            try {
+                const res = await fetch(API + '/api/requests', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        customerPhone: phone,
+                        barberId: barberId,
+                        services: ['Saç Kesimi']
+                    })
+                });
+                
+                const data = await res.json();
+                
+                if (!data.success) {
+                    resultDiv.className = 'error-box';
+                    resultDiv.innerHTML = `<h3>❌ Hata</h3><p>${data.error}</p>`;
+                    return;
+                }
+
+                resultDiv.innerHTML = `
+                    <h3>⏳ Sonuç Bekleniyor...</h3>
+                    <p>Berber: <strong>${barberName}</strong></p>
+                    <p>Talep ID: ${data.data.requestId}</p>
+                    <p>⏰ Son kullanma: ${new Date(data.data.expiresAt).toLocaleTimeString()}</p>
+                    <p>30 saniye içinde yanıt gelecek...</p>
+                `;
+
+                // Socket ile dinle
+                const socket = io(API);
+                
+                socket.on(`request_${data.data.requestId}_status`, (msg) => {
+                    const isAccepted = msg.status === 'accepted';
+                    resultDiv.className = isAccepted ? 'success-box' : 'error-box';
+                    
+                    resultDiv.innerHTML = `
+                        <h2 style="font-size: 28px; margin: 0;">
+                            ${isAccepted ? '✅ ONAYLANDI!' : '❌ REDDEDİLDİ'}
+                        </h2>
+                        <p style="font-size: 18px;"><strong>${msg.message}</strong></p>
+                        ${msg.barberAddress ? `<p>📍 <strong>Adres:</strong> ${msg.barberAddress}</p>` : ''}
+                        <p style="color: #666; font-size: 12px;">${new Date().toLocaleTimeString()}</p>
+                    `;
+                    
+                    // 10 saniye sonra gizle
+                    setTimeout(() => {
+                        resultDiv.style.display = 'none';
+                    }, 10000);
+                });
+
+            } catch (e) {
+                resultDiv.className = 'error-box';
+                resultDiv.innerHTML = `<h3>❌ Hata</h3><p>${e.message}</p>`;
+            }
+        }
+
+        // Sayfa açılınca otomatik yükle
+        window.onload = loadBarbers;
+    </script>
+</body>
+</html>

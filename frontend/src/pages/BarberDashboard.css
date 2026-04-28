@@ -1,0 +1,286 @@
+/* BarberDashboard Premium Styling */
+
+.barber-dashboard-shell {
+  background: linear-gradient(135deg, rgba(52, 152, 219, 0.04) 0%, rgba(41, 128, 185, 0.02) 100%);
+}
+
+/* Services Tab Enhancements */
+.barber-service-picker {
+  border: 1px solid rgba(52, 152, 219, 0.12);
+  border-radius: 1rem;
+  padding: 1rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(236, 247, 255, 0.92));
+  box-shadow: 0 10px 24px rgba(52, 152, 219, 0.06);
+}
+
+.barber-service-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.barber-service-form input {
+  border-radius: 0.8rem;
+  border: 1px solid rgba(52, 152, 219, 0.16);
+  padding: 0.68rem 0.85rem;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.barber-service-form input:focus {
+  border-color: rgba(52, 152, 219, 0.55);
+  box-shadow: 0 0 0 0.18rem rgba(52, 152, 219, 0.12);
+}
+
+.barber-service-form button {
+  border-radius: 0.8rem;
+  font-weight: 700;
+  min-height: 2.8rem;
+}
+
+.barber-service-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.barber-service-card {
+  border: 1px solid rgba(52, 152, 219, 0.12);
+  border-radius: 1rem;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(236, 247, 255, 0.84));
+  padding: 1rem;
+  box-shadow: 0 10px 24px rgba(52, 152, 219, 0.06);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.barber-service-card:hover {
+  border-color: rgba(52, 152, 219, 0.35);
+  box-shadow: 0 16px 32px rgba(52, 152, 219, 0.12);
+}
+
+.barber-service-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.barber-service-card-icon {
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(52, 152, 219, 0.16), rgba(41, 128, 185, 0.12));
+  color: #3498db;
+  font-size: 0.95rem;
+  flex: 0 0 auto;
+}
+
+.barber-service-card-name {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #2C3E50;
+  flex: 1;
+}
+
+.barber-service-card-body {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.9rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid rgba(52, 152, 219, 0.1);
+}
+
+.barber-service-card-price,
+.barber-service-card-duration {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.barber-service-card-price label,
+.barber-service-card-duration label {
+  font-size: 0.72rem;
+  color: rgba(44, 62, 80, 0.72);
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.barber-service-card-price strong,
+.barber-service-card-duration strong {
+  font-size: 1.1rem;
+  color: #3498db;
+}
+
+.barber-service-card-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.barber-service-card-actions button {
+  flex: 1;
+  border: 0;
+  border-radius: 0.7rem;
+  padding: 0.55rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.barber-service-card-actions .edit-btn {
+  background: linear-gradient(135deg, rgba(52, 152, 219, 0.14), rgba(41, 128, 185, 0.1));
+  color: #3498db;
+}
+
+.barber-service-card-actions .edit-btn:hover {
+  background: linear-gradient(135deg, rgba(52, 152, 219, 0.25), rgba(41, 128, 185, 0.18));
+}
+
+.barber-service-card-actions .delete-btn {
+  background: linear-gradient(135deg, rgba(231, 76, 60, 0.14), rgba(192, 57, 43, 0.1));
+  color: #e74c3c;
+}
+
+.barber-service-card-actions .delete-btn:hover {
+  background: linear-gradient(135deg, rgba(231, 76, 60, 0.25), rgba(192, 57, 43, 0.18));
+}
+
+/* Calendar Mini Calendar */
+.barber-mini-calendar {
+  border: 1px solid rgba(52, 152, 219, 0.12);
+  border-radius: 1rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(236, 247, 255, 0.88));
+  padding: 0.85rem;
+}
+
+.barber-calendar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.8rem;
+}
+
+.barber-calendar-title {
+  font-size: 1rem;
+  font-weight: 800;
+  color: #2C3E50;
+}
+
+.barber-calendar-subtitle {
+  color: rgba(52, 152, 219, 0.8);
+  font-size: 0.8rem;
+}
+
+.barber-calendar-pill {
+  padding: 0.3rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(52, 152, 219, 0.14);
+  color: #3498db;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.barber-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.barber-calendar-day {
+  border: 1px solid rgba(52, 152, 219, 0.12);
+  border-radius: 0.95rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(236, 247, 255, 0.8));
+  padding: 0.6rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  min-height: 4.2rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.barber-calendar-day:hover {
+  border-color: rgba(52, 152, 219, 0.35);
+}
+
+.barber-calendar-day-name {
+  font-size: 0.68rem;
+  color: rgba(52, 152, 219, 0.8);
+  font-weight: 700;
+}
+
+.barber-calendar-day-number {
+  font-size: 1.1rem;
+  color: #2C3E50;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.barber-calendar-day-month {
+  font-size: 0.7rem;
+  color: rgba(52, 152, 219, 0.72);
+}
+
+.barber-calendar-day.active {
+  border-color: rgba(52, 152, 219, 0.64);
+  background: linear-gradient(180deg, rgba(52, 152, 219, 0.18), rgba(41, 128, 185, 0.1));
+  box-shadow: 0 12px 20px rgba(52, 152, 219, 0.12);
+}
+
+.barber-calendar-day.active .barber-calendar-day-number {
+  color: #3498db;
+}
+
+.barber-history-entry-btn {
+  border: 1px solid rgba(184, 115, 51, 0.45);
+  background: linear-gradient(135deg, rgba(248, 241, 231, 0.95), rgba(255, 255, 255, 0.95));
+  color: #8B4513;
+  border-radius: 999px;
+  padding: 0.42rem 0.82rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  transition: all 0.2s ease;
+  box-shadow: 0 6px 16px rgba(139, 69, 19, 0.08);
+}
+
+.barber-history-entry-btn:hover {
+  border-color: rgba(184, 115, 51, 0.7);
+  background: linear-gradient(135deg, rgba(245, 233, 214, 0.98), rgba(255, 255, 255, 0.98));
+  color: #6d3410;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(139, 69, 19, 0.14);
+}
+
+.barber-past-slot-item {
+  background: #f1f3f5 !important;
+  opacity: 0.9;
+}
+
+.barber-past-slot-item .btn:disabled {
+  opacity: 0.5;
+}
+
+/* Responsive */
+@media (max-width: 991.98px) {
+  .barber-service-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .barber-calendar-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .barber-service-form {
+    grid-template-columns: 1fr;
+  }
+}

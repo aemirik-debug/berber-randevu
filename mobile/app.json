@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "BerberGo",
+    "slug": "berbergo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FAF6F0"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.berbergo.app",
+      "infoPlist": {
+        "CFBundleDisplayName": "BerberGo"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1B7A4A"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.berbergo.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "name": "BerberGo"
+    },
+    "scheme": "berbergo",
+    "extra": {
+      "eas": {
+        "projectId": ""
+      }
+    }
+  }
+}

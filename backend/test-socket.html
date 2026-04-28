@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Berber Socket Test</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        .box { border: 1px solid #ccc; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        .online { background: #4CAF50; color: white; }
+        .busy { background: #ff9800; color: white; }
+        .offline { background: #f44336; color: white; }
+        #log { background: #f5f5f5; padding: 10px; height: 200px; overflow-y: scroll; }
+    </style>
+</head>
+<body>
+    <h1>🪒 Berber Socket.io Test</h1>
+
+    <div class="box">
+        <h2>1. Berber Girişi</h2>
+        <input type="text" id="barberId" placeholder="Berber ID (login'den al)" style="width: 300px;">
+        <button onclick="barberLogin()">Berber Olarak Giriş Yap</button>
+    </div>
+
+    <div class="box">
+        <h2>2. Durum Değiştir</h2>
+        <button class="online" onclick="setStatus('online')">🟢 Online</button>
+        <button class="busy" onclick="setStatus('busy')">🟡 Meşgul</button>
+        <button class="offline" onclick="setStatus('offline')">🔴 Offline</button>
+    </div>
+
+    <div class="box">
+        <h2>3. Gelen Talepler</h2>
+        <div id="requests"></div>
+    </div>
+
+    <div class="box">
+        <h2>4. Müşteri Paneli (Yeni Sekmede Aç)</h2>
+        <button onclick="openCustomer()">Müşteri Sayfasını Aç</button>
+    </div>
+
+    <div class="box">
+        <h2>Sistem Logları</h2>
+        <div id="log"></div>
+    </div>
+
+    <script>
+        const API = 'http://localhost:5001';
+        let socket = null;
+        let currentBarberId = null;
+        let token = null;
+
+        function log(msg) {
+            document.getElementById('log').innerHTML += `<div>${new Date().toLocaleTimeString()}: ${msg}</div>`;
+        }
+
+        // Önce login olup token almalısın
+        async function loginAndGetToken() {
+    try {
+        const res = await fetch(`${API}/api/barbers/login`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({phone: "5551112233", password: "123456"})
+        });
+        const data = await res.json();
+        
+        console.log("Login yanıtı:", data); // Hata ayıklama için
+        
+        if (data.success && data.token) {
+            token = data.token;
+            currentBarberId = data.data.id;
+            document.getElementById('barberId').value = currentBarberId;
+            log(`✅ Giriş başarılı. ID: ${currentBarberId}`);
+            return true;
+        } else {
+            log(`❌ Giriş başarısız: ${data.error || 'Bilinmeyen hata'}`);
+            // Eğer kullanıcı yoksa kayıt olmayı dene
+            if (data.error && data.error.includes('hatalı')) {
+                log('💡 İpucu: Önce kayıt olmalısın. Thunder Client ile POST /api/barbers/register yap');
+            }
+        }
+    } catch (e) {
+        log(`❌ Giriş hatası: ${e.message}`);
+        console.error(e);
+    }
+    return false;
+}
+
+        async function barberLogin() {
+            if (!token) {
+                const ok = await loginAndGetToken();
+                if (!ok) return;
+            }
+
+            // Socket bağlantısı
+            socket = io(API);
+
+            socket.on('connect', () => {
+                log('🔌 Socket bağlandı');
+                socket.emit('barber_login', currentBarberId);
+            });
+
+            socket.on('incoming_request', (data) => {
+                log(`📱 YENİ TALEP! Müşteri: ${data.customerPhone}`);
+                showRequest(data);
+            });
+
+            socket.on('disconnect', () => {
+                log('❌ Socket bağlantısı koptu');
+            });
+        }
+
+        async function setStatus(status) {
+            if (!token) {
+                log('❌ Önce giriş yapmalısın');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API}/api/barbers/status`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({status})
+                });
+                const data = await res.json();
+                if (data.success) {
+                    log(`✅ Durum değiştirildi: ${status}`);
+                }
+            } catch (e) {
+                log(`❌ Hata: ${e.message}`);
+            }
+        }
+
+        function showRequest(data) {
+            const div = document.createElement('div');
+            div.style.border = '2px solid #4CAF50';
+            div.style.padding = '10px';
+            div.style.margin = '10px 0';
+            div.innerHTML = `
+                <p><strong>Müşteri:</strong> ${data.customerPhone}</p>
+                <p><strong>Hizmetler:</strong> ${data.services.join(', ')}</p>
+                <p><strong>Fiyat:</strong> ${data.estimatedPrice} TL</p>
+                <p><strong>Süre:</strong> 30 saniye!</p>
+                <button class="online" onclick="respond('${data.requestId}', 'accepted')">✅ ONAYLA</button>
+                <button class="offline" onclick="respond('${data.requestId}', 'rejected')">❌ REDDET</button>
+            `;
+            document.getElementById('requests').appendChild(div);
+
+            // 30 saniye sonra otomatik sil
+            setTimeout(() => div.remove(), 30000);
+        }
+
+        async function respond(requestId, status) {
+            try {
+                const res = await fetch(`${API}/api/requests/${requestId}/respond`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({status})
+                });
+                const data = await res.json();
+                log(`📤 Yanıt gönderildi: ${status}`);
+            } catch (e) {
+                log(`❌ Yanıt hatası: ${e.message}`);
+            }
+        }
+
+        function openCustomer() {
+            const customerWindow = window.open('', 'customer');
+            customerWindow.document.write(`
+                <!DOCTYPE html>
+                <html>
+                <head><title>Müşteri Paneli</title></head>
+                <body style="font-family: Arial; padding: 20px;">
+                    <h1>👤 Müşteri Paneli</h1>
+                    <div style="border: 1px solid #ccc; padding: 15px;">
+                        <h3>Berber Seç</h3>
+                        <button onclick="loadBarbers()">Yakındaki Berberleri Yükle</button>
+                        <div id="barberList"></div>
+                    </div>
+                    <div id="result"></div>
+                    <script>
+                        const API = 'http://localhost:5001';
+                        
+                        async function loadBarbers() {
+                            const res = await fetch('${API}/api/barbers/nearby?longitude=29.124&latitude=40.987');
+                            const data = await res.json();
+                            let html = '<h4>Berberler:</h4>';
+                            data.data.forEach(b => {
+                                html += '<div style="border: 1px solid #ddd; margin: 5px; padding: 10px;">';
+                                html += '<p><strong>' + b.name + '</strong> - ' + b.status + '</p>';
+                                html += '<button onclick="sendRequest(\\'' + b._id + '\\')">Randevu Talebi Gönder</button>';
+                                html += '</div>';
+                            });
+                            document.getElementById('barberList').innerHTML = html;
+                        }
+
+                        async function sendRequest(barberId) {
+                            const res = await fetch('${API}/api/requests', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({
+                                    customerPhone: '5559998877',
+                                    barberId: barberId,
+                                    services: ['Saç Kesimi']
+                                })
+                            });
+                            const data = await res.json();
+                            document.getElementById('result').innerHTML = 
+                                '<h3>Sonuç:</h3><pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                            
+                            // Socket ile dinle
+                            const socket = io('${API}');
+                            socket.on('request_' + data.data.requestId + '_status', (msg) => {
+                                document.getElementById('result').innerHTML += 
+                                    '<h4>📱 Berber Yanıtı:</h4><p>' + msg.message + '</p>';
+                            });
+                        }
+                    <\/script>
+                    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"><\/script>
+                </body>
+                </html>
+            `);
+        }
+    </script>
+</body>
+</html>
