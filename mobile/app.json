@@ -15,8 +15,11 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.berbergo.app",
+      "buildNumber": "1",
       "infoPlist": {
-        "CFBundleDisplayName": "BerberGo"
+        "CFBundleDisplayName": "BerberGo",
+        "NSCameraUsageDescription": "Profil fotoğrafınızı güncellemek için kameraya erişim gereklidir.",
+        "NSPhotoLibraryUsageDescription": "Profil fotoğrafınızı seçmek için fotoğraf kütüphanesine erişim gereklidir."
       }
     },
     "android": {
@@ -25,17 +28,32 @@
         "backgroundColor": "#1B7A4A"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.berbergo.app"
+      "package": "com.berbergo.app",
+      "versionCode": 1,
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
       "name": "BerberGo"
     },
     "scheme": "berbergo",
+    "plugins": [
+      "expo-dev-client"
+    ],
     "extra": {
       "eas": {
-        "projectId": ""
+        "projectId": "411a2dbb-066b-4c68-9d47-3e612ba3d48a"
       }
+    },
+    "owner": "umityeke",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": ""
     }
   }
 }
