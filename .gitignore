@@ -23,6 +23,9 @@ mobile/web-build/
 .DS_Store
 Thumbs.db
 .vscode/
+.wwebjs_auth/
+.wwebjs_cache/
+mobile/.idea/
 
 # Environment files
 .env

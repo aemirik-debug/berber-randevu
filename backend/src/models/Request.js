@@ -18,6 +18,9 @@ const requestSchema = new mongoose.Schema({
     type: String,
     required: true
   }],
+  serviceNames: [{
+    type: String
+  }],
   estimatedPrice: {
     type: Number,
     required: true
@@ -25,6 +28,9 @@ const requestSchema = new mongoose.Schema({
   estimatedDuration: {
     type: Number, // dakika
     default: 30
+  },
+  scheduledAt: {
+    type: Date // Randevunun yapılacağı tarih/saat
   },
   status: {
     type: String,

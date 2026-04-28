@@ -1996,7 +1996,7 @@ const handleQuickBookFromFavorite = (favorite) => {
                   setSelectedDistrict('');
                 }}
               >
-                <option value="">İl seçin</option>
+                <option value="">Tümü</option>
                 {cities.map((cityItem) => (
                   <option key={cityItem} value={cityItem}>{cityItem}</option>
                 ))}
@@ -2010,7 +2010,7 @@ const handleQuickBookFromFavorite = (favorite) => {
                 disabled={!selectedCity}
                 onChange={(e) => setSelectedDistrict(e.target.value)}
               >
-                <option value="">İlçe seçin</option>
+                <option value="">Tümü</option>
                 {filterDistricts.map((districtItem) => (
                   <option key={districtItem} value={districtItem}>{districtItem}</option>
                 ))}
@@ -2130,43 +2130,7 @@ const handleQuickBookFromFavorite = (favorite) => {
                       <div className="home-review-form mt-2">
                         <div className="mb-2">
                           <label className="form-label small mb-1">Puan</label>
-                          <select
-                            className="form-select form-select-sm"
-                            value={reviewDrafts[barber._id]?.rating || ownReview?.rating || 5}
-                            onChange={(e) => handleReviewDraftChange(barber._id, 'rating', Number(e.target.value))}
-                          >
-                            <option value={5}>5 - Mükemmel</option>
-                            <option value={4}>4 - Çok iyi</option>
-                            <option value={3}>3 - İyi</option>
-                            <option value={2}>2 - Orta</option>
-                            <option value={1}>1 - Zayıf</option>
-                          </select>
-                        </div>
-                        <div className="mb-2">
-                          <label className="form-label small mb-1">Yorumunuz</label>
-                          <textarea
-                            className="form-control form-control-sm"
-                            rows={2}
-                            maxLength={500}
-                            value={reviewDrafts[barber._id]?.comment || ownReview?.comment || ''}
-                            onChange={(e) => handleReviewDraftChange(barber._id, 'comment', e.target.value)}
-                            placeholder="Deneyiminizi kısa bir şekilde paylaşın"
-                          />
-                        </div>
-                        {reviewFeedbackByBarber[barber._id]?.message && (
-                          <div className={`alert alert-${reviewFeedbackByBarber[barber._id]?.type || 'info'} py-2 px-3 mb-2`} role="alert">
-                            {reviewFeedbackByBarber[barber._id]?.message}
-                          </div>
-                        )}
-                        <div className="d-flex gap-2 align-items-center flex-wrap">
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-success"
-                            disabled={submittingReviewBarberId === barber._id}
-                            onClick={() => handleSubmitReview(barber._id)}
-                          >
-                            {submittingReviewBarberId === barber._id ? 'Gönderiliyor...' : ownReview ? 'Yorumu Güncelle' : 'Yorumu Gönder'}
-                          </button>
+
                           {ownReview && canDeleteOwn && (
                             <button
                               type="button"

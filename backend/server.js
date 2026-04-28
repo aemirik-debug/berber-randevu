@@ -80,6 +80,106 @@ app.use('/api/requests', require('./src/routes/requestRoutes'));
 app.use('/api/subscription', require('./src/routes/subscriptionRoutes'));
 app.use('/api/slots', require('./src/routes/slotRoutes'));
 
+// --- WHATSAPP WEBHOOK (Berberden gelen yanıtı yakalar) ---
+app.post('/webhook/whatsapp-reply', async (req, res) => {
+  const { phone, action } = req.body;
+
+  try {
+    console.log(`📱 WhatsApp Yanıtı Geldi: ${phone} -> ${action}`);
+
+    if (!phone || !action) {
+      console.log('⚠️ Eksik parametreler:', { phone, action });
+      return res.status(400).json({ error: 'phone ve action zorunlu' });
+    }
+
+    // 1. Berberi bul
+    const Barber = require('./src/models/Barber');
+    const barber = await Barber.findOne({ phone: phone });
+    
+    if (!barber) {
+      console.log('⚠️ Berber bulunamadı, telefon:', phone);
+      return res.status(404).json({ error: 'Berber bulunamadı' });
+    }
+
+    // 2. Berbere ait en son "pending" randevuyu bul
+    const Request = require('./src/models/Request');
+    const request = await Request.findOne({ 
+      barber: barber._id, 
+      status: 'pending' 
+    }).sort({ createdAt: -1 });
+
+    if (!request) {
+      console.log('⚠️ Berberin bekleyen randevusu yok:', phone);
+      return res.status(404).json({ error: 'Bekleyen randevu yok' });
+    }
+
+    // 3. Durumu güncelle
+    const oldStatus = request.status;
+    // 'accept' ve 'onayla' ikisini destekle, geri kalanı reject/iptal
+    const isAccepted = action === 'accept' || action === 'onayla';
+    request.status = isAccepted ? 'accepted' : 'rejected';
+    if (isAccepted) {
+      request.acceptedAt = new Date();
+    }
+    await request.save();
+    console.log(`✅ Randevu: ${oldStatus} -> ${request.status}`);
+
+    // 4. Socket.io ile tarayıcıdaki berbere anlık haber ver
+    const barberSocketId = connectedBarbers.get(barber._id.toString());
+    if (barberSocketId && io) {
+      io.to(barberSocketId).emit('request_responded', { 
+        requestId: request._id, 
+        status: request.status,
+        action: action
+      });
+      console.log('📡 Socket.io bildirimi gönderildi berbere');
+    }
+
+    // 5. Müşteriye WhatsApp bildirim gönder
+    try {
+      const { sendWhatsappToCustomer } = require('./src/services/whatsappService');
+      
+      // Tarih ve saat format et
+      let dateTimeStr = '';
+      if (request.scheduledAt) {
+        const date = new Date(request.scheduledAt);
+        const gunAdlari = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
+        const gunAdi = gunAdlari[date.getDay()];
+        const gun = String(date.getDate()).padStart(2, '0');
+        const ay = String(date.getMonth() + 1).padStart(2, '0');
+        const yil = date.getFullYear();
+        const saat = String(date.getHours()).padStart(2, '0');
+        const dakika = String(date.getMinutes()).padStart(2, '0');
+        dateTimeStr = `\nTarih: ${gun}.${ay}.${yil} ${gunAdi}\nSaat: ${saat}:${dakika}`;
+      }
+      
+      const serviceList = request.serviceNames && request.serviceNames.length > 0 
+        ? request.serviceNames.join(', ') 
+        : request.services.join(', ');
+      
+      const statusText = isAccepted ? 'KABUL EDILDI ✅' : 'REDDEDİLDİ ❌';
+      const customerMsg = `Randevu talebi ${statusText}\n\nBerber: ${barber.name || barber.salonName}\nHizmetler: ${serviceList}\nFiyat: ${request.estimatedPrice} TL${dateTimeStr}`;
+      
+      console.error('📨 MÜŞTERI MESAJI START 📨');
+      console.error(customerMsg);
+      console.error('📨 MÜŞTERI MESAJI END 📨');
+      
+      await sendWhatsappToCustomer(request.customerPhone, customerMsg);
+      console.log('📱 Müşteriye WhatsApp bildirim gönderildi');
+    } catch (whatsappErr) {
+      console.error('⚠️ Müşteriye bildirim gönderilemedi:', whatsappErr.message);
+      // Devam et, önemli değil
+    }
+
+    res.status(200).json({ success: true, message: 'Randevu güncellendi ve müşteri bilgilendirildi' });
+
+  } catch (err) {
+    console.error('❌ Webhook Hatası (Stack):', err);
+    res.status(500).json({ error: 'Sunucu hatası: ' + err.message });
+  }
+});
+
+
 // Veritabanı Yardımcı Fonksiyonları (Olduğu gibi korundu)
 async function ensureSlotIndexes() {
   try {

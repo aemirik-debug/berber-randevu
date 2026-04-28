@@ -1,4 +1,5 @@
 const Request = require('../models/Request');
+const { sendWhatsappToBarber } = require('../services/whatsappService');
 const Barber = require('../models/Barber');
 
 // @desc    Yeni randevu talebi oluştur
@@ -6,7 +7,7 @@ const Barber = require('../models/Barber');
 // @access  Public
 const createRequest = async (req, res) => {
   try {
-    const { customerName, customerPhone, barberId, services, notes } = req.body;
+    const { customerName, customerPhone, barberId, services, notes, scheduledAt } = req.body;
 
     // Berber kontrolü
     const barber = await Barber.findById(barberId);
@@ -18,15 +19,17 @@ const createRequest = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Berber şu an çevrimdışı' });
     }
 
-    // Fiyat ve süre hesaplama
+    // Fiyat ve süre hesaplama + Service names çıkar
     let estimatedPrice = 0;
     let estimatedDuration = 0;
+    const serviceNames = [];
 
-    for (const serviceName of services) {
-      const service = barber.services.find(s => s.name === serviceName);
+    for (const serviceId of services) {
+      const service = barber.services.find(s => s._id.toString() === serviceId.toString());
       if (service) {
         estimatedPrice += service.price;
         estimatedDuration += service.duration;
+        serviceNames.push(service.name);
       }
     }
 
@@ -44,19 +47,30 @@ const createRequest = async (req, res) => {
       });
     }
 
+
     // Yeni talep oluştur
     const request = new Request({
       customerName,
       customerPhone,
       barber: barberId,
       services,
+      serviceNames,
       estimatedPrice,
       estimatedDuration,
+      scheduledAt: scheduledAt || new Date(),
       notes,
       expiresAt: new Date(Date.now() + 30000) // 30 saniye sonra expire
     });
 
     await request.save();
+
+    // WhatsApp mesajı gönder
+    try {
+      const msg = `Yeni randevu talebi!\nMüşteri: ${customerName}\nTelefon: ${customerPhone}\nHizmetler: ${serviceNames.join(', ')}\nFiyat: ${estimatedPrice} TL\nOnaylamak için "onayla", iptal için "iptal" yazabilirsiniz.`;
+      await sendWhatsappToBarber(barber.phone, msg);
+    } catch (err) {
+      console.error('WhatsApp mesajı gönderilemedi:', err.message);
+    }
 
     // Socket.io ile bildirim
     const io = req.app.get('io');
@@ -149,6 +163,9 @@ const respondToRequest = async (req, res) => {
 
     await request.save();
 
+    // Berberin bilgisini getir (müşteriye göndermek için)
+    const barber = await Barber.findById(req.barberId).select('name salonName');
+
     // Socket.io ile bildirim
     const io = req.app.get('io');
     if (io) {
@@ -157,6 +174,19 @@ const respondToRequest = async (req, res) => {
         status: request.status,
         action
       });
+    }
+
+    // Müşteriye WhatsApp bildirim gönder
+    try {
+      const { sendWhatsappToCustomer } = require('../services/whatsappService');
+      const statusText = action === 'accept' ? 'KABUL EDILDI ✅' : 'REDDEDİLDİ ❌';
+      const customerMsg = `Randevu talebi ${statusText}\n\nBerber: ${barber.name || barber.salonName}\nHizmetler: ${request.services.join(', ')}\nFiyat: ${request.estimatedPrice} TL`;
+      
+      await sendWhatsappToCustomer(request.customerPhone, customerMsg);
+      console.log('📱 Müşteriye WhatsApp bildirim gönderildi (respond endpoint)');
+    } catch (whatsappErr) {
+      console.error('⚠️ Müşteriye bildirim gönderilemedi:', whatsappErr.message);
+      // Devam et, önemli değil
     }
 
     res.json({ success: true, message: 'İşlem başarılı', data: request });

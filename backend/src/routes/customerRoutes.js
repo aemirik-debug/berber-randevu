@@ -135,6 +135,24 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// Aktif musteri profilini getir (PROTECTED)
+router.get('/me', authMiddleware, async (req, res) => {
+  try {
+    if (req.user?.role !== 'customer' || !req.customerId) {
+      return res.status(403).json({ message: 'Bu islem icin yetkiniz yok' });
+    }
+
+    const customer = await Customer.findById(req.customerId);
+    if (!customer) {
+      return res.status(404).json({ message: 'Musteri bulunamadi' });
+    }
+
+    res.json({ success: true, customer: sanitizeCustomerForClient(customer) });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
 // Profil güncelleme (PROTECTED)
 router.put('/update/:id', authMiddleware, async (req, res) => {
   try {

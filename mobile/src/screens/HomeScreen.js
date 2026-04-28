@@ -1,36 +1,68 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import { checkApiHealth } from '../services/healthService';
+import { ApiError, fetchLiveDashboard } from '../services/authService';
 
-export default function HomeScreen() {
+export default function HomeScreen({ token, user, onLogout, onUnauthorized }) {
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState('Mobil uygulama hazir. API baglanti kontrolu yapabilirsiniz.');
+  const [error, setError] = useState('');
+  const [liveData, setLiveData] = useState({
+    apiMessage: '-',
+    totalBarbers: 0,
+    onlineBarbers: 0,
+  });
 
-  const handleCheckApi = async () => {
+  const displayName = useMemo(() => {
+    const name = String(user?.name || '').trim();
+    const surname = String(user?.surname || '').trim();
+    const fullName = `${name} ${surname}`.trim();
+    if (fullName) return fullName;
+    return user?.phone || 'Musteri';
+  }, [user]);
+
+  const loadLiveData = async () => {
     setLoading(true);
+    setError('');
     try {
-      const data = await checkApiHealth();
-      const apiMessage = data?.message || 'API erisimi basarili.';
-      setMessage(`Baglanti basarili: ${apiMessage}`);
+      const data = await fetchLiveDashboard(token);
+      setLiveData(data);
     } catch (error) {
-      setMessage(`Baglanti hatasi: ${error.message}`);
+      if (error instanceof ApiError && error.isUnauthorized) {
+        onUnauthorized?.();
+        return;
+      }
+      setError(error.message);
     } finally {
       setLoading(false);
     }
   };
 
+  useEffect(() => {
+    loadLiveData();
+  }, []);
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Berber Randevu Mobile</Text>
-      <Text style={styles.subtitle}>Expo + React Native baslangic kurulumu tamamlandi.</Text>
+      <Text style={styles.subtitle}>Hos geldin, {displayName}</Text>
 
-      <Pressable style={styles.button} onPress={handleCheckApi} disabled={loading}>
-        <Text style={styles.buttonText}>{loading ? 'Kontrol ediliyor...' : 'API Baglantisini Test Et'}</Text>
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Canli Sistem Karti</Text>
+        <Text style={styles.cardLine}>API: {liveData.apiMessage}</Text>
+        <Text style={styles.cardLine}>Toplam berber: {liveData.totalBarbers}</Text>
+        <Text style={styles.cardLine}>Aktif berber: {liveData.onlineBarbers}</Text>
+      </View>
+
+      <Pressable style={styles.button} onPress={loadLiveData} disabled={loading}>
+        <Text style={styles.buttonText}>{loading ? 'Yenileniyor...' : 'Canli Veriyi Yenile'}</Text>
+      </Pressable>
+
+      <Pressable style={styles.logoutButton} onPress={onLogout} disabled={loading}>
+        <Text style={styles.logoutButtonText}>Cikis Yap</Text>
       </Pressable>
 
       {loading ? <ActivityIndicator size="small" color="#1f7a5a" /> : null}
 
-      <Text style={styles.message}>{message}</Text>
+      {error ? <Text style={styles.error}>{error}</Text> : null}
     </View>
   );
 }
@@ -51,7 +83,27 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 15,
     color: '#425466',
-    marginBottom: 24,
+    marginBottom: 18,
+  },
+  card: {
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#e6e2d9',
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1e2a39',
+    marginBottom: 8,
+  },
+  cardLine: {
+    fontSize: 14,
+    color: '#2d3d4d',
+    marginBottom: 4,
   },
   button: {
     backgroundColor: '#1f7a5a',
@@ -59,16 +111,31 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 10,
   },
   buttonText: {
     color: '#ffffff',
     fontSize: 15,
     fontWeight: '600',
   },
-  message: {
+  logoutButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#cfd8dc',
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    marginBottom: 16,
+    backgroundColor: '#ffffff',
+  },
+  logoutButtonText: {
+    color: '#425466',
     fontSize: 14,
-    color: '#26323f',
+    fontWeight: '600',
+  },
+  error: {
+    fontSize: 14,
+    color: '#9b2c2c',
     lineHeight: 20,
   },
 });

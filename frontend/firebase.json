@@ -15,14 +15,7 @@
         }
       },
       {
-        "source": "/barber/**",
-        "run": {
-          "serviceId": "berbergo-servis",
-          "region": "europe-west3"
-        }
-      },
-      {
-        "source": "/custom/**",
+        "source": "/api/**", 
         "run": {
           "serviceId": "berbergo-servis",
           "region": "europe-west3"

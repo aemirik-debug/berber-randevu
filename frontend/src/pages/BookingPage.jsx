@@ -112,12 +112,19 @@ const loadDistricts = async (city) => {
   setDistricts(res.data);
 };
 const loadBarbers = async (forcedCity = city, forcedDistrict = district, preferredBarberId = '') => {
-    if (!forcedCity || !forcedDistrict) return;
     setLoadingBarbers(true);
     setBarbersFetched(true);
     setSelectedBarber(null);
     try {
-      const res = await api.get('/barbers/byDistrict', { params: { city: forcedCity, district: forcedDistrict } });
+      let res;
+      // Eğer ilçe seçilmemişse veya 'Tümü' ise, tüm berberleri getir
+      if (!forcedCity || !forcedDistrict) {
+        res = await api.get('/barbers');
+      } else {
+        console.log('API çağrısı:', { city: forcedCity, district: forcedDistrict });
+        res = await api.get('/barbers/byDistrict', { params: { city: forcedCity, district: forcedDistrict } });
+      }
+      console.log('API dönüşü:', res.data);
       const incomingBarbers = Array.isArray(res.data) ? res.data : [];
       setBarbers(incomingBarbers);
 
@@ -173,6 +180,13 @@ useEffect(() => {
 
   applyPrefill();
 }, [initialSelection]);
+
+// İl veya ilçe değiştiğinde otomatik berberleri getir
+useEffect(() => {
+  if (city && district) {
+    loadBarbers(city, district);
+  }
+}, [city, district]);
 
   const renderStars = (value) => {
     const rating = Math.max(0, Math.min(5, Math.round(Number(value) || 0)));
@@ -523,7 +537,7 @@ useEffect(() => {
     setSelectedMasterId(OWNER_SCOPE_VALUE);
     loadDistricts(e.target.value);
   }}>
-  <option value="">İl seçin...</option>
+  <option value="">Tümü</option>
   {cities.map(c => <option key={c} value={c}>{c}</option>)}
 </select>
 
@@ -540,7 +554,7 @@ useEffect(() => {
     setSelectedBarber(null);
     setSelectedMasterId(OWNER_SCOPE_VALUE);
   }}>
-    <option value="">İlçe seçin...</option>
+    <option value="">Tümü</option>
     {districts.map(d => <option key={d} value={d}>{d}</option>)}
   </select>
 
@@ -550,7 +564,7 @@ useEffect(() => {
       </div>
 
       {/* Berberleri listele */}
-      {district && (
+      {(city || district) && (
         <button onClick={loadBarbers} className={`btn btn-primary booking-list-btn mb-3 ${isMobile && visibleStep !== 1 ? 'booking-mobile-step-hidden' : ''}`}>Berberleri Listele</button>
       )}
 
