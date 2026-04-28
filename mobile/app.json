@@ -41,7 +41,14 @@
     },
     "scheme": "berbergo",
     "plugins": [
-      "expo-dev-client"
+      "expo-dev-client",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Profil fotoğrafınızı seçmek için fotoğraf kütüphanesine erişim gereklidir.",
+          "cameraPermission": "Profil fotoğrafı çekmek için kameraya erişim gereklidir."
+        }
+      ]
     ],
     "extra": {
       "eas": {
